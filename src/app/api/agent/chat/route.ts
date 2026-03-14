@@ -226,7 +226,7 @@ ${context}
           sources,
           articles: articles.map((a) => ({ id: a.id, title: a.title, url: a.url, category: a.category })),
           terms: matchedTerms.map((t) => ({ id: t.id, name: t.name, definition: t.definition })),
-          refSections: refSectionsToSend.map((s) => ({ id: s.id, doc_title: s.doc_title, heading: s.heading })),
+          refSections: refSectionsToSend.map((s) => ({ id: s.id, doc_title: s.doc_title, heading: s.heading, content: s.content })),
         });
       } catch (err) {
         send({ type: "error", message: String(err) });

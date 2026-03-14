@@ -43,6 +43,7 @@ interface RefSectionRef {
   id: number;
   doc_title: string;
   heading: string;
+  content: string;
 }
 
 interface Message {
@@ -78,6 +79,34 @@ function getCategoryColor(name?: string | null) {
   if (!name) return "bg-slate-100 text-slate-600";
   if (!categoryColors[name]) categoryColors[name] = PALETTE[colorIdx++ % PALETTE.length];
   return categoryColors[name];
+}
+
+function RefSectionCard({ section }: { section: RefSectionRef }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg overflow-hidden text-xs">
+      <div className="p-2.5">
+        <div className="flex items-start gap-2">
+          <BookOpen size={12} className="text-indigo-500 flex-shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <span className="font-medium text-slate-800">{section.heading}</span>
+            <span className="text-slate-400 ml-1.5">{section.doc_title}</span>
+          </div>
+        </div>
+      </div>
+      <button
+        onClick={() => setExpanded((p) => !p)}
+        className="w-full px-2.5 py-1.5 bg-slate-50 border-t border-slate-100 text-left text-xs text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+      >
+        {expanded ? "Hide content ↑" : "View content ↓"}
+      </button>
+      {expanded && (
+        <div className="px-2.5 py-2 border-t border-slate-100 bg-slate-50">
+          <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{section.content}</p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function SourceCard({ qa }: { qa: QAItem }) {
@@ -629,18 +658,9 @@ export function AgentPanel() {
                       <BookOpen size={11} />
                       <span>{msg.refSections.length} reference section{msg.refSections.length !== 1 ? "s" : ""} from documents</span>
                     </div>
-                    <div className="grid grid-cols-1 gap-1.5">
+                    <div className="grid grid-cols-1 gap-2">
                       {msg.refSections.map((r) => (
-                        <div
-                          key={r.id}
-                          className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs"
-                        >
-                          <BookOpen size={12} className="text-indigo-500 flex-shrink-0" />
-                          <div className="min-w-0">
-                            <span className="text-slate-800 font-medium">{r.heading}</span>
-                            <span className="text-slate-400 ml-1.5">{r.doc_title}</span>
-                          </div>
-                        </div>
+                        <RefSectionCard key={r.id} section={r} />
                       ))}
                     </div>
                   </div>
