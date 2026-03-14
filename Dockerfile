@@ -1,8 +1,8 @@
-FROM node:20-alpine AS base
+FROM node:20-slim AS base
+RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 
 # --- Dependencies ---
 FROM base AS deps
-RUN apk add --no-cache python3 make g++
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -16,16 +16,16 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 # --- Runtime ---
-FROM base AS runner
+FROM node:20-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATABASE_PATH=./data/kb.db
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
 
-# Copy standalone build (includes server.js + bundled node_modules)
+# Copy standalone build
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
