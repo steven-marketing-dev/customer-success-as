@@ -9,6 +9,7 @@ interface ArticleRef {
   title: string;
   url: string;
   category: string | null;
+  excerpt?: string;
 }
 
 interface TermRef {
@@ -43,6 +44,7 @@ interface RefSectionRef {
   id: number;
   doc_title: string;
   heading: string;
+  excerpt: string;
   content: string;
 }
 
@@ -88,22 +90,33 @@ function RefSectionCard({ section }: { section: RefSectionRef }) {
       <div className="p-2.5">
         <div className="flex items-start gap-2">
           <BookOpen size={12} className="text-indigo-500 flex-shrink-0 mt-0.5" />
-          <div className="min-w-0">
-            <span className="font-medium text-slate-800">{section.heading}</span>
-            <span className="text-slate-400 ml-1.5">{section.doc_title}</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-1.5">
+              <span className="font-medium text-slate-800">{section.heading}</span>
+              <span className="text-slate-400 text-[10px]">{section.doc_title}</span>
+            </div>
+            {section.excerpt && (
+              <p className="mt-1.5 text-slate-600 leading-relaxed border-l-2 border-indigo-200 pl-2 italic">
+                {section.excerpt}
+              </p>
+            )}
           </div>
         </div>
       </div>
-      <button
-        onClick={() => setExpanded((p) => !p)}
-        className="w-full px-2.5 py-1.5 bg-slate-50 border-t border-slate-100 text-left text-xs text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-      >
-        {expanded ? "Hide content ↑" : "View content ↓"}
-      </button>
-      {expanded && (
-        <div className="px-2.5 py-2 border-t border-slate-100 bg-slate-50">
-          <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{section.content}</p>
-        </div>
+      {section.content && (
+        <>
+          <button
+            onClick={() => setExpanded((p) => !p)}
+            className="w-full px-2.5 py-1 bg-slate-50 border-t border-slate-100 text-left text-[10px] text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+          >
+            {expanded ? "Hide full section ↑" : "View full section ↓"}
+          </button>
+          {expanded && (
+            <div className="px-2.5 py-2 border-t border-slate-100 bg-slate-50 max-h-48 overflow-y-auto">
+              <p className="text-slate-600 leading-relaxed whitespace-pre-wrap">{section.content}</p>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -610,21 +623,27 @@ export function AgentPanel() {
                     </div>
                     <div className="grid grid-cols-1 gap-1.5">
                       {msg.articles.map((a) => (
-                        <a
-                          key={a.id}
-                          href={a.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs hover:border-cyan-300 hover:bg-cyan-50 transition-colors"
-                        >
-                          <Globe size={12} className="text-cyan-500 flex-shrink-0" />
-                          <span className="text-slate-800 font-medium truncate">{a.title}</span>
-                          {a.category && (
-                            <span className="ml-auto px-1.5 py-0.5 rounded-full bg-cyan-100 text-cyan-700 font-medium flex-shrink-0">
-                              {a.category}
-                            </span>
+                        <div key={a.id} className="bg-white border border-slate-200 rounded-lg overflow-hidden text-xs">
+                          <a
+                            href={a.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 px-3 py-2 hover:bg-cyan-50 transition-colors"
+                          >
+                            <Globe size={12} className="text-cyan-500 flex-shrink-0" />
+                            <span className="text-slate-800 font-medium truncate">{a.title}</span>
+                            {a.category && (
+                              <span className="ml-auto px-1.5 py-0.5 rounded-full bg-cyan-100 text-cyan-700 font-medium flex-shrink-0">
+                                {a.category}
+                              </span>
+                            )}
+                          </a>
+                          {a.excerpt && (
+                            <div className="px-3 py-2 border-t border-slate-100 bg-slate-50">
+                              <p className="text-slate-600 leading-relaxed border-l-2 border-cyan-200 pl-2 italic">{a.excerpt}</p>
+                            </div>
                           )}
-                        </a>
+                        </div>
                       ))}
                     </div>
                   </div>

@@ -1,0 +1,22 @@
+services:
+  app:
+    image: ghcr.io/steven-marketing-dev/customer-success-as:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - kb-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=./data/kb.db
+      - AI_PROVIDER=${AI_PROVIDER:-claude}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - HUBSPOT_ACCESS_TOKEN=${HUBSPOT_ACCESS_TOKEN}
+      - NEXT_PUBLIC_HUBSPOT_HUB_ID=${NEXT_PUBLIC_HUBSPOT_HUB_ID}
+      - RECLUSTER_THRESHOLD=${RECLUSTER_THRESHOLD:-20}
+      - SYNC_LIMIT=${SYNC_LIMIT:-0}
+      - DB_UPLOAD_SECRET=${DB_UPLOAD_SECRET}
+    restart: unless-stopped
+
+volumes:
+  kb-data:

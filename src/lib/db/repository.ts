@@ -938,24 +938,40 @@ export class Repository {
   }
 
   searchRefDocSections(query: string, limit = 8): Array<RefDocSection & { doc_title: string }> {
-    // Use both stemmed keywords AND original words for better matching on domain terms
-    const stemmed = this.extractKeywords(query);
-    const original = query
+    // Extract multi-word phrases (2-3 consecutive non-stop words) for phrase matching
+    const words = query
       .toLowerCase()
       .replace(/[^\w\s]/g, " ")
       .split(/\s+/)
-      .filter((w) => w.length >= 3 && !Repository.STOP_WORDS.has(w))
-      .filter((w, i, arr) => arr.indexOf(w) === i);
+      .filter((w) => w.length >= 2);
+    const meaningfulWords = words.filter((w) => !Repository.STOP_WORDS.has(w) && w.length >= 3);
+    const phrases: string[] = [];
+    for (let i = 0; i < words.length - 1; i++) {
+      const a = words[i], b = words[i + 1];
+      if (!Repository.STOP_WORDS.has(a) && !Repository.STOP_WORDS.has(b) && a.length >= 2 && b.length >= 2) {
+        phrases.push(`${a} ${b}`);
+        if (i + 2 < words.length) {
+          const c = words[i + 2];
+          if (!Repository.STOP_WORDS.has(c) && c.length >= 2) {
+            phrases.push(`${a} ${b} ${c}`);
+          }
+        }
+      }
+    }
 
-    // Merge unique keywords (stemmed + original)
-    const allKeywords = [...new Set([...stemmed, ...original])];
-    if (allKeywords.length === 0) return [];
+    // Use both stemmed keywords AND original words
+    const stemmed = this.extractKeywords(query);
+    const allKeywords = [...new Set([...stemmed, ...meaningfulWords.filter((w, i, a) => a.indexOf(w) === i)])];
+    if (allKeywords.length === 0 && phrases.length === 0) return [];
 
-    // Score: heading match = 5 (exact match is more valuable), content match = 1
-    const conditions = allKeywords.map(() =>
+    // Score: phrase match in content = 10 (most valuable), heading keyword = 5, content keyword = 1
+    const phraseConds = phrases.map(() =>
+      `(CASE WHEN LOWER(s.content) LIKE ? THEN 10 ELSE 0 END + CASE WHEN LOWER(s.heading) LIKE ? THEN 15 ELSE 0 END)`
+    );
+    const keywordConds = allKeywords.map(() =>
       `(CASE WHEN LOWER(s.heading) LIKE ? THEN 5 ELSE 0 END + CASE WHEN LOWER(s.content) LIKE ? THEN 1 ELSE 0 END)`
     );
-    const scoreExpr = conditions.join(" + ");
+    const scoreExpr = [...phraseConds, ...keywordConds].join(" + ");
 
     const sql = `SELECT s.*, rd.title as doc_title, (${scoreExpr}) as score
       FROM ref_doc_sections s
@@ -965,6 +981,10 @@ export class Repository {
       LIMIT ?`;
 
     const params: (string | number)[] = [];
+    for (const phrase of phrases) {
+      const like = `%${phrase}%`;
+      params.push(like, like);
+    }
     for (const kw of allKeywords) {
       const like = `%${kw}%`;
       params.push(like, like);

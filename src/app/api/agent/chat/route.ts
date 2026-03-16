@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
   // Retrieve matching reference document sections (active docs only)
   let refDocSections: Awaited<ReturnType<typeof repo.searchRefDocSections>> = [];
   try {
-    refDocSections = repo.searchRefDocSections(question, 5);
+    refDocSections = repo.searchRefDocSections(question, 8);
   } catch (e) { console.warn("[agent/chat] ref_docs fetch error:", e); }
   console.log(`[agent/chat] Ref doc sections found: ${refDocSections.length}`, refDocSections.map(s => s.heading));
 
@@ -75,14 +75,14 @@ export async function POST(req: NextRequest) {
         const truncated = a.content.length > 2000
           ? a.content.slice(0, 2000) + "..."
           : a.content;
-        return `[Article] ${a.title}${a.category ? ` (${a.category})` : ""}\n${truncated}`;
+        return `[Article:${a.id}] ${a.title}${a.category ? ` (${a.category})` : ""}\n${truncated}`;
       }).join("\n\n")
     : "";
 
-  // Build reference documents context (truncate each to ~2000 chars)
+  // Build reference documents context (truncate each to ~3000 chars — these are authoritative)
   const refDocsContext = refDocSections.length > 0
     ? refDocSections.map((s) => {
-        const truncated = s.content.length > 2000 ? s.content.slice(0, 2000) + "..." : s.content;
+        const truncated = s.content.length > 3000 ? s.content.slice(0, 3000) + "..." : s.content;
         return `[REF:${s.id}] ${s.doc_title} > ${s.heading}\n${truncated}`;
       }).join("\n\n")
     : "";
@@ -138,14 +138,15 @@ Rules:
 - Use the glossary to understand product-specific terminology
 - Reference official documentation (Articles) for how-to content and feature explanations
 - Reference support Q&A entries for real customer interactions and resolutions
+- IMPORTANT: Reference documents (marked [REF:N]) contain authoritative training materials and product manuals. When they contain information relevant to the question, you MUST use that information and cite the section ID. They are the most reliable source for assessment methodology, trait definitions, scoring interpretation, and validation procedures.
 - When the exact topic isn't in the KB but a similar pattern exists, adapt the answer and note that you're applying a similar case
 - If the question truly cannot be answered from the provided entries, say so clearly — do not guess or invent information
 - If the answer is partial, say what you know and note the limitation
 - Do not reference external information
-- Reference documents contain training materials and product manuals — use them for assessment methodology, trait definitions, scoring interpretation, and validation procedures
-- At the very end of your response, output these two lines:
-  SOURCES:[id1,id2,...] (IDs of Q&A entries you used, or SOURCES:[] if none)
-  REFS:[id1,id2,...] (IDs of reference document sections you used, or REFS:[] if none)
+- CITATION RULES: At the very end of your response, output these three lines exactly. You MUST cite every source you drew information from — do not leave a citation list empty if you used that source type:
+  SOURCES:[id1,id2,...] (IDs of Q&A entries [ID:N] you used, or SOURCES:[] if none)
+  REFS:[id1,id2,...] (IDs of reference document sections [REF:N] you used, or REFS:[] if none)
+  ARTICLES:[id1,id2,...] (IDs of articles [Article:N] you used, or ARTICLES:[] if none)
 ${(() => {
   const rules: string[] = [];
   for (const r of globalRules) {
@@ -164,16 +165,16 @@ ${glossaryContext ? `
 --- GLOSSARY ---
 ${glossaryContext}
 --- END GLOSSARY ---` : ""}
-${articlesContext ? `
---- DOCUMENTATION ---
-${articlesContext}
---- END DOCUMENTATION ---` : ""}
 ${refDocsContext ? `
---- REFERENCE DOCUMENTS ---
+--- REFERENCE DOCUMENTS (training materials & product manuals — use these for trait definitions, assessment methodology, scoring, and validation) ---
 ${refDocsContext}
 --- END REFERENCE DOCUMENTS ---` : ""}
+${articlesContext ? `
+--- DOCUMENTATION (public KB articles) ---
+${articlesContext}
+--- END DOCUMENTATION ---` : ""}
 
---- SUPPORT Q&A ---
+--- SUPPORT Q&A (past customer tickets) ---
 ${context}
 --- END SUPPORT Q&A ---`;
 
@@ -203,30 +204,60 @@ ${context}
           ? results.filter((qa) => usedIds.includes(qa.id))
           : [];
 
-        // Parse REFS:[...] if the agent included them (optional)
+        // Parse REFS:[id,...] from the response
         const refsMatch = fullText.match(/REFS:\[([^\]]*)\]/m);
         const usedRefIds = refsMatch?.[1]
           ? refsMatch[1].split(",").map((s) => parseInt(s.trim(), 10)).filter(Boolean)
           : [];
-
-        // If the agent cited specific refs, use those; otherwise show all searched sections
-        const refSectionsToSend = usedRefIds.length > 0
+        const citedRefSections = usedRefIds.length > 0
           ? refDocSections.filter((s) => usedRefIds.includes(s.id))
-          : refDocSections;
+          : [];
 
-        // Strip SOURCES and REFS lines from the answer
+        // Parse ARTICLES:[id,...] from the response
+        const articlesMatch = fullText.match(/ARTICLES:\[([^\]]*)\]/m);
+        const usedArticleIds = articlesMatch?.[1]
+          ? articlesMatch[1].split(",").map((s) => parseInt(s.trim(), 10)).filter(Boolean)
+          : [];
+        const citedArticles = usedArticleIds.length > 0
+          ? articles.filter((a) => usedArticleIds.includes(a.id))
+          : [];
+
+        // Strip SOURCES, REFS, and ARTICLES lines from the answer
         const cleanAnswer = fullText
           .replace(/\n?SOURCES:\[[^\]]*\]/m, "")
           .replace(/\n?REFS:\[[^\]]*\]/m, "")
+          .replace(/\n?ARTICLES:\[[^\]]*\]/m, "")
           .trim();
+
+        // Extract relevant excerpts from cited content by finding the best-matching paragraph
+        function extractExcerpt(content: string, answer: string): string {
+          const paragraphs = content
+            .split(/\n\n+|\n(?=[A-Z•\-\d])/)
+            .map((p) => p.trim())
+            .filter((p) => p.length > 30 && p.length < 500);
+          if (paragraphs.length === 0) return content.slice(0, 200).trim();
+
+          const answerWords = new Set(answer.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
+          let best = paragraphs[0];
+          let bestScore = 0;
+          for (const p of paragraphs) {
+            const words = p.toLowerCase().split(/\W+/);
+            const score = words.filter((w) => answerWords.has(w)).length;
+            if (score > bestScore) {
+              bestScore = score;
+              best = p;
+            }
+          }
+          return best;
+        }
 
         send({
           type: "done",
           answer: cleanAnswer,
           sources,
-          articles: articles.map((a) => ({ id: a.id, title: a.title, url: a.url, category: a.category })),
+          articles: citedArticles.map((a) => ({ id: a.id, title: a.title, url: a.url, category: a.category, excerpt: extractExcerpt(a.content, cleanAnswer) })),
           terms: matchedTerms.map((t) => ({ id: t.id, name: t.name, definition: t.definition })),
-          refSections: refSectionsToSend.map((s) => ({ id: s.id, doc_title: s.doc_title, heading: s.heading, content: s.content })),
+          refSections: citedRefSections.map((s) => ({ id: s.id, doc_title: s.doc_title, heading: s.heading, excerpt: extractExcerpt(s.content, cleanAnswer), content: s.content })),
         });
       } catch (err) {
         send({ type: "error", message: String(err) });
