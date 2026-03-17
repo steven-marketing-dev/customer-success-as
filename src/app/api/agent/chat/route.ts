@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
   const repo = new Repository(getDb());
 
   // Retrieve relevant Q&A pairs using keyword scoring (not exact LIKE match)
-  const results = repo.searchByKeywords(question, 10);
+  const results = repo.searchByKeywords(question, 8);
 
   // Retrieve matching KB articles (public documentation)
   const searchedArticles = repo.searchKBArticles(question, 3);
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
   // Retrieve matching reference document sections (active docs only)
   let refDocSections: Awaited<ReturnType<typeof repo.searchRefDocSections>> = [];
   try {
-    refDocSections = repo.searchRefDocSections(question, 8);
+    refDocSections = repo.searchRefDocSections(question, 6);
   } catch (e) { console.warn("[agent/chat] ref_docs fetch error:", e); }
   console.log(`[agent/chat] Ref doc sections found: ${refDocSections.length}`, refDocSections.map(s => s.heading));
 
@@ -79,10 +79,10 @@ export async function POST(req: NextRequest) {
       }).join("\n\n")
     : "";
 
-  // Build reference documents context (truncate each to ~3000 chars — these are authoritative)
+  // Build reference documents context (truncate each to ~2000 chars)
   const refDocsContext = refDocSections.length > 0
     ? refDocSections.map((s) => {
-        const truncated = s.content.length > 3000 ? s.content.slice(0, 3000) + "..." : s.content;
+        const truncated = s.content.length > 2000 ? s.content.slice(0, 2000) + "..." : s.content;
         return `[REF:${s.id}] ${s.doc_title} > ${s.heading}\n${truncated}`;
       }).join("\n\n")
     : "";

@@ -167,11 +167,12 @@ export async function* streamChat(
   system: string,
   history: ChatMessage[],
   userMessage: string,
+  opts?: { smart?: boolean },
 ): AsyncGenerator<string> {
   if (getProvider() === "gemini") {
     const genai = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY ?? "");
     const model = genai.getGenerativeModel({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.5-pro",
       systemInstruction: system,
     });
     const geminiHistory = history.map((m) => ({
@@ -187,7 +188,7 @@ export async function* streamChat(
     return;
   }
 
-  // Claude streaming — uses smart model for user-facing chat
+  // Claude streaming — uses smart model for user-facing chat, with rate-limit retry
   const client = new Anthropic();
   const messages: Anthropic.Messages.MessageParam[] = [
     ...history.map((m) => ({
@@ -197,16 +198,32 @@ export async function* streamChat(
     { role: "user" as const, content: userMessage },
   ];
 
-  const stream = client.messages.stream({
-    model: CLAUDE_SMART,
-    max_tokens: 4096,
-    system,
-    messages,
-  });
+  const maxRetries = 2;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const stream = client.messages.stream({
+        model: CLAUDE_SMART,
+        max_tokens: 4096,
+        system,
+        messages,
+      });
 
-  for await (const event of stream) {
-    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-      yield event.delta.text;
+      for await (const event of stream) {
+        if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+          yield event.delta.text;
+        }
+      }
+      return; // success — exit
+    } catch (err: unknown) {
+      const status = (err as { status?: number }).status;
+      if (status === 429 && attempt < maxRetries) {
+        const retryAfter = (err as { headers?: Record<string, string> }).headers?.["retry-after"];
+        const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : (attempt + 1) * 15_000;
+        console.warn(`[streamChat] Rate limited, waiting ${waitMs}ms before retry ${attempt + 1}/${maxRetries}`);
+        await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
+      throw err;
     }
   }
 }

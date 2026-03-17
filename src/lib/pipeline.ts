@@ -228,6 +228,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
     rawTickets = await hubspot.getTickets({
       modifiedAfter,
       limit: syncLimit,
+      closedOnly: true,
     });
     stats.tickets_fetched = rawTickets.length;
     log(`✓ ${rawTickets.length} tickets fetched`);

@@ -189,7 +189,7 @@ export class Repository {
     return this.getQAPairById(id)!;
   }
 
-  // ─── Shared keyword extraction ───────────────────────────────────────────
+  // ─── Search helpers ─────────────────────────────────────────────────────
 
   private static readonly STOP_WORDS = new Set([
     "the", "and", "for", "are", "but", "not", "you", "all", "can", "her", "was", "one",
@@ -199,23 +199,26 @@ export class Repository {
     "their", "being", "also", "just", "only", "very", "after",
   ]);
 
-  private static stem(w: string): string {
-    return w
-      .replace(/(ings|ing|ments|ment|ness|ously|ively|edly|ally|able|ible|ful|less|ize|ise|ated|ates|ly)$/, "")
-      .replace(/(ed|er|es|s)$/, "");
-  }
-
-  private extractKeywords(query: string): string[] {
-    return query
-      .toLowerCase()
+  /** Build a safe FTS5 MATCH query from user input.
+   *  Uses OR between terms so partial matches work — BM25 ranks by relevance.
+   *  Adjacent word pairs are added as phrase boosts. */
+  private buildFtsQuery(query: string): string | null {
+    const words = query
       .replace(/[^\w\s]/g, " ")
       .split(/\s+/)
-      .filter((w) => w.length >= 3 && !Repository.STOP_WORDS.has(w))
-      .map((w) => {
-        const stemmed = Repository.stem(w);
-        return stemmed.length >= 3 ? stemmed : w;
-      })
-      .filter((w, i, arr) => arr.indexOf(w) === i);
+      .filter((w) => w.length >= 2 && !Repository.STOP_WORDS.has(w.toLowerCase()))
+      .map((w) => w.toLowerCase());
+    if (words.length === 0) return null;
+
+    // OR between individual terms — partial matches rank lower via BM25
+    const parts: string[] = words.map((w) => `"${w}"`);
+
+    // Add adjacent 2-word phrases as extra boost terms
+    for (let i = 0; i < words.length - 1; i++) {
+      parts.push(`"${words[i]} ${words[i + 1]}"`);
+    }
+
+    return parts.join(" OR ");
   }
 
   // ─── Keyword-based search (used by both KB search panel and agent) ──────
@@ -225,10 +228,10 @@ export class Repository {
   }
 
   searchByKeywords(query: string, limit = 15, categoryId?: number, offset = 0): Array<QAPair & { category_name?: string; category_id?: number; score: number }> {
-    const keywords = this.extractKeywords(query);
+    const ftsQuery = this.buildFtsQuery(query);
 
     // No query text — return by category or recent
-    if (keywords.length === 0) {
+    if (!ftsQuery) {
       if (categoryId) {
         return this.db
           .prepare(
@@ -246,30 +249,29 @@ export class Repository {
       return this.getRecentQA(limit, offset) as Array<QAPair & { hubspot_id?: string; category_name?: string; category_id?: number; score: number }>;
     }
 
-    // Build a query that scores each QA by number of keyword matches
-    const conditions = keywords.map(() =>
-      `(CASE WHEN LOWER(q.question) LIKE ? THEN 2 ELSE 0 END + CASE WHEN LOWER(q.summary) LIKE ? THEN 1 ELSE 0 END + CASE WHEN LOWER(q.answer) LIKE ? THEN 1 ELSE 0 END + CASE WHEN LOWER(q.question_template) LIKE ? THEN 1 ELSE 0 END)`
-    );
-    const scoreExpr = conditions.join(" + ");
-
+    // FTS5 + BM25: subquery gets scored rowids, outer query joins metadata
+    // bm25() returns negative values (lower = better match)
     const categoryFilter = categoryId ? "AND m.category_id = ?" : "";
 
-    const sql = `SELECT q.*, t.hubspot_id, c.name as category_name, c.id as category_id, (${scoreExpr}) as score
-      FROM qa_pairs q
+    const sql = `SELECT q.*, t.hubspot_id, c.name as category_name, c.id as category_id, ranked.score
+      FROM (
+        SELECT fts.rowid as id, bm25(qa_pairs_fts, 5.0, 2.0, 1.0, 3.0) as score
+        FROM qa_pairs_fts fts
+        WHERE qa_pairs_fts MATCH ?
+        ORDER BY score ASC
+        LIMIT ?
+      ) ranked
+      JOIN qa_pairs q ON q.id = ranked.id
       JOIN tickets t ON q.ticket_id = t.id
-      LEFT JOIN qa_category_map m ON q.id = m.qa_id
+      LEFT JOIN qa_category_map m ON q.id = m.qa_id ${categoryFilter}
       LEFT JOIN categories c ON m.category_id = c.id
-      WHERE score > 0 ${categoryFilter}
       GROUP BY q.id
-      ORDER BY score DESC, q.created_at DESC
+      ORDER BY ranked.score ASC
       LIMIT ? OFFSET ?`;
 
-    // Each keyword needs 4 params (question, summary, answer, question_template)
-    const params: (string | number)[] = [];
-    for (const kw of keywords) {
-      const like = `%${kw}%`;
-      params.push(like, like, like, like);
-    }
+    // Inner limit is generous to allow category filter to narrow down
+    const innerLimit = categoryId ? limit * 5 : limit + offset;
+    const params: (string | number)[] = [ftsQuery, innerLimit];
     if (categoryId) params.push(categoryId);
     params.push(limit, offset);
 
@@ -470,18 +472,22 @@ export class Repository {
   }
 
   searchTerms(query: string): Term[] {
-    const keywords = this.extractKeywords(query);
-    if (keywords.length === 0) return this.getAllTerms();
+    const words = query
+      .toLowerCase()
+      .replace(/[^\w\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !Repository.STOP_WORDS.has(w));
+    if (words.length === 0) return this.getAllTerms();
 
-    const conditions = keywords.map(() =>
+    const conditions = words.map(() =>
       `(CASE WHEN LOWER(t.name) LIKE ? THEN 3 ELSE 0 END + CASE WHEN LOWER(t.definition) LIKE ? THEN 1 ELSE 0 END + CASE WHEN LOWER(t.aliases) LIKE ? THEN 2 ELSE 0 END)`
     );
     const scoreExpr = conditions.join(" + ");
 
     const sql = `SELECT t.*, (${scoreExpr}) as score FROM terms t WHERE score > 0 ORDER BY score DESC, t.name ASC`;
     const params: string[] = [];
-    for (const kw of keywords) {
-      const like = `%${kw}%`;
+    for (const w of words) {
+      const like = `%${w}%`;
       params.push(like, like, like);
     }
     return this.db.prepare(sql).all(...params) as Term[];
@@ -675,26 +681,22 @@ export class Repository {
   }
 
   searchKBArticles(query: string, limit = 10, offset = 0): KBArticle[] {
-    const keywords = this.extractKeywords(query);
-    if (keywords.length === 0) {
+    const ftsQuery = this.buildFtsQuery(query);
+    if (!ftsQuery) {
       return this.db
         .prepare("SELECT * FROM kb_articles ORDER BY title ASC LIMIT ? OFFSET ?")
         .all(limit, offset) as KBArticle[];
     }
 
-    const conditions = keywords.map(() =>
-      `(CASE WHEN LOWER(a.title) LIKE ? THEN 3 ELSE 0 END + CASE WHEN LOWER(a.content) LIKE ? THEN 1 ELSE 0 END)`
-    );
-    const scoreExpr = conditions.join(" + ");
+    // FTS5 + BM25: weights = title(5), content(1)
+    const sql = `SELECT a.*, bm25(kb_articles_fts, 5.0, 1.0) as score
+      FROM kb_articles_fts fts
+      JOIN kb_articles a ON a.id = fts.rowid
+      WHERE kb_articles_fts MATCH ?
+      ORDER BY score ASC
+      LIMIT ? OFFSET ?`;
 
-    const sql = `SELECT a.*, (${scoreExpr}) as score FROM kb_articles a WHERE score > 0 ORDER BY score DESC, a.title ASC LIMIT ? OFFSET ?`;
-    const params: (string | number)[] = [];
-    for (const kw of keywords) {
-      const like = `%${kw}%`;
-      params.push(like, like);
-    }
-    params.push(limit, offset);
-    return this.db.prepare(sql).all(...params) as KBArticle[];
+    return this.db.prepare(sql).all(ftsQuery, limit, offset) as KBArticle[];
   }
 
   getKBArticleCategories(): Array<{ category: string; count: number }> {
@@ -938,58 +940,19 @@ export class Repository {
   }
 
   searchRefDocSections(query: string, limit = 8): Array<RefDocSection & { doc_title: string }> {
-    // Extract multi-word phrases (2-3 consecutive non-stop words) for phrase matching
-    const words = query
-      .toLowerCase()
-      .replace(/[^\w\s]/g, " ")
-      .split(/\s+/)
-      .filter((w) => w.length >= 2);
-    const meaningfulWords = words.filter((w) => !Repository.STOP_WORDS.has(w) && w.length >= 3);
-    const phrases: string[] = [];
-    for (let i = 0; i < words.length - 1; i++) {
-      const a = words[i], b = words[i + 1];
-      if (!Repository.STOP_WORDS.has(a) && !Repository.STOP_WORDS.has(b) && a.length >= 2 && b.length >= 2) {
-        phrases.push(`${a} ${b}`);
-        if (i + 2 < words.length) {
-          const c = words[i + 2];
-          if (!Repository.STOP_WORDS.has(c) && c.length >= 2) {
-            phrases.push(`${a} ${b} ${c}`);
-          }
-        }
-      }
-    }
+    const ftsQuery = this.buildFtsQuery(query);
+    if (!ftsQuery) return [];
 
-    // Use both stemmed keywords AND original words
-    const stemmed = this.extractKeywords(query);
-    const allKeywords = [...new Set([...stemmed, ...meaningfulWords.filter((w, i, a) => a.indexOf(w) === i)])];
-    if (allKeywords.length === 0 && phrases.length === 0) return [];
-
-    // Score: phrase match in content = 10 (most valuable), heading keyword = 5, content keyword = 1
-    const phraseConds = phrases.map(() =>
-      `(CASE WHEN LOWER(s.content) LIKE ? THEN 10 ELSE 0 END + CASE WHEN LOWER(s.heading) LIKE ? THEN 15 ELSE 0 END)`
-    );
-    const keywordConds = allKeywords.map(() =>
-      `(CASE WHEN LOWER(s.heading) LIKE ? THEN 5 ELSE 0 END + CASE WHEN LOWER(s.content) LIKE ? THEN 1 ELSE 0 END)`
-    );
-    const scoreExpr = [...phraseConds, ...keywordConds].join(" + ");
-
-    const sql = `SELECT s.*, rd.title as doc_title, (${scoreExpr}) as score
-      FROM ref_doc_sections s
+    // FTS5 + BM25: weights = heading(5), content(1)
+    // Only active docs — filter via JOIN
+    const sql = `SELECT s.*, rd.title as doc_title, bm25(ref_doc_sections_fts, 5.0, 1.0) as score
+      FROM ref_doc_sections_fts fts
+      JOIN ref_doc_sections s ON s.id = fts.rowid
       JOIN ref_docs rd ON rd.id = s.doc_id
-      WHERE rd.active = 1 AND score > 0
-      ORDER BY score DESC, s.section_order ASC
+      WHERE ref_doc_sections_fts MATCH ? AND rd.active = 1
+      ORDER BY score ASC
       LIMIT ?`;
 
-    const params: (string | number)[] = [];
-    for (const phrase of phrases) {
-      const like = `%${phrase}%`;
-      params.push(like, like);
-    }
-    for (const kw of allKeywords) {
-      const like = `%${kw}%`;
-      params.push(like, like);
-    }
-    params.push(limit);
-    return this.db.prepare(sql).all(...params) as Array<RefDocSection & { doc_title: string }>;
+    return this.db.prepare(sql).all(ftsQuery, limit) as Array<RefDocSection & { doc_title: string }>;
   }
 }

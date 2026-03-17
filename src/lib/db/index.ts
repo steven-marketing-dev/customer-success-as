@@ -293,6 +293,93 @@ function initDb(db: Database.Database) {
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }
   }
+
+  // --- FTS5 full-text search indexes ---
+  // Non-external tables (store own copy) for reliable MATCH queries
+  // porter unicode61 tokenizer gives proper English stemming + unicode support
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS qa_pairs_fts USING fts5(
+        question, answer, summary, question_template,
+        tokenize='porter unicode61'
+      );
+      CREATE VIRTUAL TABLE IF NOT EXISTS kb_articles_fts USING fts5(
+        title, content,
+        tokenize='porter unicode61'
+      );
+      CREATE VIRTUAL TABLE IF NOT EXISTS ref_doc_sections_fts USING fts5(
+        heading, content,
+        tokenize='porter unicode61'
+      );
+    `);
+  } catch { /* FTS tables already exist */ }
+
+  // Sync triggers: keep FTS indexes in sync with source tables
+  const triggerSql = `
+    -- qa_pairs triggers
+    CREATE TRIGGER IF NOT EXISTS qa_pairs_fts_ai AFTER INSERT ON qa_pairs BEGIN
+      INSERT INTO qa_pairs_fts(rowid, question, answer, summary, question_template)
+      VALUES (new.id, new.question, new.answer, new.summary, new.question_template);
+    END;
+    CREATE TRIGGER IF NOT EXISTS qa_pairs_fts_ad AFTER DELETE ON qa_pairs BEGIN
+      INSERT INTO qa_pairs_fts(qa_pairs_fts, rowid, question, answer, summary, question_template)
+      VALUES ('delete', old.id, old.question, old.answer, old.summary, old.question_template);
+    END;
+    CREATE TRIGGER IF NOT EXISTS qa_pairs_fts_au AFTER UPDATE ON qa_pairs BEGIN
+      INSERT INTO qa_pairs_fts(qa_pairs_fts, rowid, question, answer, summary, question_template)
+      VALUES ('delete', old.id, old.question, old.answer, old.summary, old.question_template);
+      INSERT INTO qa_pairs_fts(rowid, question, answer, summary, question_template)
+      VALUES (new.id, new.question, new.answer, new.summary, new.question_template);
+    END;
+
+    -- kb_articles triggers
+    CREATE TRIGGER IF NOT EXISTS kb_articles_fts_ai AFTER INSERT ON kb_articles BEGIN
+      INSERT INTO kb_articles_fts(rowid, title, content)
+      VALUES (new.id, new.title, new.content);
+    END;
+    CREATE TRIGGER IF NOT EXISTS kb_articles_fts_ad AFTER DELETE ON kb_articles BEGIN
+      INSERT INTO kb_articles_fts(kb_articles_fts, rowid, title, content)
+      VALUES ('delete', old.id, old.title, old.content);
+    END;
+    CREATE TRIGGER IF NOT EXISTS kb_articles_fts_au AFTER UPDATE ON kb_articles BEGIN
+      INSERT INTO kb_articles_fts(kb_articles_fts, rowid, title, content)
+      VALUES ('delete', old.id, old.title, old.content);
+      INSERT INTO kb_articles_fts(rowid, title, content)
+      VALUES (new.id, new.title, new.content);
+    END;
+
+    -- ref_doc_sections triggers
+    CREATE TRIGGER IF NOT EXISTS ref_doc_sections_fts_ai AFTER INSERT ON ref_doc_sections BEGIN
+      INSERT INTO ref_doc_sections_fts(rowid, heading, content)
+      VALUES (new.id, new.heading, new.content);
+    END;
+    CREATE TRIGGER IF NOT EXISTS ref_doc_sections_fts_ad AFTER DELETE ON ref_doc_sections BEGIN
+      INSERT INTO ref_doc_sections_fts(ref_doc_sections_fts, rowid, heading, content)
+      VALUES ('delete', old.id, old.heading, old.content);
+    END;
+    CREATE TRIGGER IF NOT EXISTS ref_doc_sections_fts_au AFTER UPDATE ON ref_doc_sections BEGIN
+      INSERT INTO ref_doc_sections_fts(ref_doc_sections_fts, rowid, heading, content)
+      VALUES ('delete', old.id, old.heading, old.content);
+      INSERT INTO ref_doc_sections_fts(rowid, heading, content)
+      VALUES (new.id, new.heading, new.content);
+    END;
+  `;
+  try { db.exec(triggerSql); } catch { /* triggers already exist */ }
+
+  // Populate FTS indexes from existing data (idempotent — only if empty)
+  try {
+    const count = (db.prepare("SELECT COUNT(*) as n FROM qa_pairs_fts").get() as { n: number }).n;
+    if (count === 0) {
+      db.exec(`
+        INSERT INTO qa_pairs_fts(rowid, question, answer, summary, question_template)
+          SELECT id, question, COALESCE(answer, ''), summary, question_template FROM qa_pairs;
+        INSERT INTO kb_articles_fts(rowid, title, content)
+          SELECT id, title, content FROM kb_articles;
+        INSERT INTO ref_doc_sections_fts(rowid, heading, content)
+          SELECT id, heading, content FROM ref_doc_sections;
+      `);
+    }
+  } catch { /* source tables may be empty */ }
 }
 
 export function getDb(): Database.Database {

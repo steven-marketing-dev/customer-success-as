@@ -60,15 +60,16 @@ export class HubSpotClient {
   async getTickets(opts: {
     modifiedAfter?: Date | null;
     limit?: number;
+    closedOnly?: boolean;
   } = {}): Promise<RawTicket[]> {
-    const { modifiedAfter, limit = 0 } = opts;
+    const { modifiedAfter, limit = 0, closedOnly = false } = opts;
     const all: RawTicket[] = [];
     let after: string | undefined;
 
     while (true) {
       const { results, paging } = modifiedAfter
-        ? await this.searchTickets(modifiedAfter, after)
-        : await this.listTickets(after);
+        ? await this.searchTickets(modifiedAfter, after, closedOnly)
+        : await this.listTickets(after, closedOnly);
 
       all.push(...results);
 
@@ -80,15 +81,15 @@ export class HubSpotClient {
     return all;
   }
 
-  private async listTickets(after?: string): Promise<{ results: RawTicket[]; paging: { next?: { after: string } } | null }> {
+  private async listTickets(after?: string, closedOnly = false): Promise<{ results: RawTicket[]; paging: { next?: { after: string } } | null }> {
+    const filters: Array<{ propertyName: string; operator: FilterOperatorEnum; value: string }> = [
+      { propertyName: "createdate", operator: FilterOperatorEnum.Gte, value: String(START_DATE_MS) },
+    ];
+    if (closedOnly) {
+      filters.push({ propertyName: "hs_pipeline_stage", operator: FilterOperatorEnum.Eq, value: "4" });
+    }
     const res = await this.client.crm.tickets.searchApi.doSearch({
-      filterGroups: [{
-        filters: [{
-          propertyName: "createdate",
-          operator: FilterOperatorEnum.Gte,
-          value: String(START_DATE_MS),
-        }],
-      }],
+      filterGroups: [{ filters }],
       properties: TICKET_PROPERTIES,
       sorts: [],
       limit: 50,
@@ -101,24 +102,18 @@ export class HubSpotClient {
     };
   }
 
-  private async searchTickets(modifiedAfter: Date, after?: string): Promise<{ results: RawTicket[]; paging: { next?: { after: string } } | null }> {
+  private async searchTickets(modifiedAfter: Date, after?: string, closedOnly = false): Promise<{ results: RawTicket[]; paging: { next?: { after: string } } | null }> {
     const tsMs = modifiedAfter.getTime();
 
+    const filters: Array<{ propertyName: string; operator: FilterOperatorEnum; value: string }> = [
+      { propertyName: "createdate", operator: FilterOperatorEnum.Gte, value: String(START_DATE_MS) },
+      { propertyName: "hs_lastmodifieddate", operator: FilterOperatorEnum.Gte, value: String(tsMs) },
+    ];
+    if (closedOnly) {
+      filters.push({ propertyName: "hs_pipeline_stage", operator: FilterOperatorEnum.Eq, value: "4" });
+    }
     const res = await this.client.crm.tickets.searchApi.doSearch({
-      filterGroups: [{
-        filters: [
-          {
-            propertyName: "createdate",
-            operator: FilterOperatorEnum.Gte,
-            value: String(START_DATE_MS),
-          },
-          {
-            propertyName: "hs_lastmodifieddate",
-            operator: FilterOperatorEnum.Gte,
-            value: String(tsMs),
-          },
-        ],
-      }],
+      filterGroups: [{ filters }],
       properties: TICKET_PROPERTIES,
       sorts: [],
       limit: 50,

@@ -23,6 +23,15 @@ interface JobSnapshot {
   stats: PipelineStats | null;
 }
 
+interface SyncPreview {
+  total: number;
+  new: number;
+  updated: number;
+  unprocessed_in_db: number;
+  mode: string;
+  since: string | null;
+}
+
 export function PipelinePanel({ onDone }: { onDone?: () => void }) {
   const [status, setStatus] = useState<Status>("idle");
   const [logs, setLogs] = useState<string[]>([]);
@@ -30,6 +39,8 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
   const [finalStats, setFinalStats] = useState<PipelineStats | null>(null);
   const [connected, setConnected] = useState(false);
   const [testLimit, setTestLimit] = useState(3);
+  const [preview, setPreview] = useState<SyncPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const readerRef = useRef<ReadableStreamDefaultReader | null>(null);
   const onDoneRef = useRef(onDone);
@@ -105,7 +116,31 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
     return () => { readerRef.current?.cancel().catch(() => {}); };
   }, [connectToStatus]);
 
-  const run = async (mode: RunMode) => {
+  const fetchPreview = async (mode: "incremental" | "full") => {
+    setPreviewLoading(true);
+    setPreview(null);
+    try {
+      const res = await fetch("/api/pipeline/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      if (res.ok) {
+        const data = await res.json() as SyncPreview;
+        setPreview(data);
+      }
+    } catch { /* ignore */ }
+    setPreviewLoading(false);
+  };
+
+  const confirmAndRun = async () => {
+    if (!preview) return;
+    const mode = preview.mode as RunMode;
+    setPreview(null);
+    await startRun(mode);
+  };
+
+  const startRun = async (mode: RunMode) => {
     setLogs([]);
     setProgress(null);
     setFinalStats(null);
@@ -117,7 +152,7 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
     });
 
     if (res.status === 409) {
-      return; // Already running, SSE already connected
+      return;
     }
     if (!res.ok) {
       setLogs(["✗ Failed to start pipeline."]);
@@ -127,6 +162,14 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
 
     setStatus("running");
     connectToStatus();
+  };
+
+  const run = async (mode: RunMode) => {
+    if (mode === "incremental" || mode === "full") {
+      await fetchPreview(mode as "incremental" | "full");
+    } else {
+      await startRun(mode);
+    }
   };
 
   const buttons: { mode: RunMode; label: string; desc: string; icon: typeof Play; color: string }[] = [
@@ -194,6 +237,45 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
           </button>
         ))}
       </div>
+
+      {/* Sync preview / confirmation */}
+      {previewLoading && (
+        <div className="flex items-center gap-2 text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+          <Loader2 size={14} className="animate-spin" />
+          <span>Checking HubSpot for tickets...</span>
+        </div>
+      )}
+      {preview && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 space-y-3">
+          <div className="text-sm text-indigo-900">
+            <p className="font-semibold mb-1">
+              {preview.total} ticket{preview.total !== 1 ? "s" : ""} found
+              {preview.since ? ` (modified since ${preview.since})` : " (all)"}
+            </p>
+            <div className="flex gap-4 text-xs text-indigo-700">
+              <span>{preview.new} new</span>
+              <span>{preview.updated} already in DB</span>
+              {preview.unprocessed_in_db > 0 && (
+                <span>{preview.unprocessed_in_db} pending processing</span>
+              )}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={confirmAndRun}
+              className="px-4 py-1.5 text-sm font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition-all"
+            >
+              Confirm & Sync
+            </button>
+            <button
+              onClick={() => setPreview(null)}
+              className="px-4 py-1.5 text-sm font-semibold rounded-lg bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-all"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Progress bar */}
       {progress && status === "running" && (
