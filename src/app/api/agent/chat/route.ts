@@ -2,13 +2,18 @@ import { NextRequest } from "next/server";
 import { Repository } from "@/lib/db/repository";
 import { getDb, type QAPair } from "@/lib/db/index";
 import { streamChat, type ChatMessage } from "@/lib/ai/provider";
+import { requireAuth } from "@/lib/auth";
 
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
-  const { question, history = [] } = await req.json() as {
+  const session = requireAuth(req);
+  const userId = session?.userId ?? 0;
+
+  const { question, history = [], conversationId: incomingConvId } = await req.json() as {
     question: string;
     history: ChatMessage[];
+    conversationId?: number | null;
   };
 
   if (!question?.trim()) {
@@ -16,6 +21,16 @@ export async function POST(req: NextRequest) {
   }
 
   const repo = new Repository(getDb());
+
+  // Persist: create or reuse conversation, save user message
+  let conversationId = incomingConvId ?? null;
+  if (userId > 0) {
+    if (!conversationId) {
+      const conv = repo.createConversation(userId, question.slice(0, 80));
+      conversationId = conv.id;
+    }
+    repo.addMessage({ conversation_id: conversationId, role: "user", content: question });
+  }
 
   // Retrieve relevant Q&A pairs using keyword scoring (not exact LIKE match)
   const results = repo.searchByKeywords(question, 8);
@@ -251,13 +266,27 @@ ${context}
           return best;
         }
 
+        const doneArticles = citedArticles.map((a) => ({ id: a.id, title: a.title, url: a.url, category: a.category, excerpt: extractExcerpt(a.content, cleanAnswer) }));
+        const doneTerms = matchedTerms.map((t) => ({ id: t.id, name: t.name, definition: t.definition }));
+        const doneRefSections = citedRefSections.map((s) => ({ id: s.id, doc_title: s.doc_title, heading: s.heading, excerpt: extractExcerpt(s.content, cleanAnswer), content: s.content }));
+
+        // Persist assistant message
+        let messageId: number | null = null;
+        if (userId > 0 && conversationId) {
+          const sourcesJson = JSON.stringify({ sources, articles: doneArticles, terms: doneTerms, refSections: doneRefSections });
+          const msg = repo.addMessage({ conversation_id: conversationId, role: "assistant", content: cleanAnswer, sources_json: sourcesJson });
+          messageId = msg.id;
+        }
+
         send({
           type: "done",
           answer: cleanAnswer,
           sources,
-          articles: citedArticles.map((a) => ({ id: a.id, title: a.title, url: a.url, category: a.category, excerpt: extractExcerpt(a.content, cleanAnswer) })),
-          terms: matchedTerms.map((t) => ({ id: t.id, name: t.name, definition: t.definition })),
-          refSections: citedRefSections.map((s) => ({ id: s.id, doc_title: s.doc_title, heading: s.heading, excerpt: extractExcerpt(s.content, cleanAnswer), content: s.content })),
+          articles: doneArticles,
+          terms: doneTerms,
+          refSections: doneRefSections,
+          conversationId,
+          messageId,
         });
       } catch (err) {
         send({ type: "error", message: String(err) });

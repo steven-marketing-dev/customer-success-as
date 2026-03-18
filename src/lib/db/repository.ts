@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import crypto from "crypto";
-import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection } from "./index";
+import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating } from "./index";
 
 export class Repository {
   private db: Database.Database;
@@ -954,5 +954,200 @@ export class Repository {
       LIMIT ?`;
 
     return this.db.prepare(sql).all(ftsQuery, limit) as Array<RefDocSection & { doc_title: string }>;
+  }
+
+  // ─── Users ────────────────────────────────────────────────────────────────
+
+  getUserByUsername(username: string): User | undefined {
+    return this.db.prepare("SELECT * FROM users WHERE username = ?").get(username) as User | undefined;
+  }
+
+  getUserById(id: number): User | undefined {
+    return this.db.prepare("SELECT * FROM users WHERE id = ?").get(id) as User | undefined;
+  }
+
+  createUser(data: { username: string; password_hash: string; display_name: string | null; role: string }): User {
+    const stmt = this.db.prepare(
+      "INSERT INTO users (username, password_hash, display_name, role) VALUES (?, ?, ?, ?)"
+    );
+    const info = stmt.run(data.username, data.password_hash, data.display_name, data.role);
+    return this.getUserById(info.lastInsertRowid as number)!;
+  }
+
+  deleteUser(id: number): void {
+    this.db.prepare("DELETE FROM users WHERE id = ?").run(id);
+  }
+
+  getAllUsers(): User[] {
+    return this.db.prepare("SELECT * FROM users ORDER BY created_at ASC").all() as User[];
+  }
+
+  // ─── Conversations ────────────────────────────────────────────────────────
+
+  createConversation(userId: number, title?: string): Conversation {
+    const stmt = this.db.prepare(
+      "INSERT INTO conversations (user_id, title) VALUES (?, ?)"
+    );
+    const info = stmt.run(userId, title || null);
+    return this.db.prepare("SELECT * FROM conversations WHERE id = ?").get(info.lastInsertRowid) as Conversation;
+  }
+
+  getConversation(id: number): Conversation | undefined {
+    return this.db.prepare("SELECT * FROM conversations WHERE id = ?").get(id) as Conversation | undefined;
+  }
+
+  updateConversationTitle(id: number, title: string): void {
+    this.db.prepare("UPDATE conversations SET title = ?, updated_at = unixepoch() WHERE id = ?").run(title, id);
+  }
+
+  getUserConversations(userId: number, limit = 50, offset = 0): Array<Conversation & { username: string; message_count: number }> {
+    return this.db.prepare(`
+      SELECT c.*, u.username, (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) as message_count
+      FROM conversations c
+      JOIN users u ON u.id = c.user_id
+      WHERE c.user_id = ?
+      ORDER BY c.updated_at DESC
+      LIMIT ? OFFSET ?
+    `).all(userId, limit, offset) as Array<Conversation & { username: string; message_count: number }>;
+  }
+
+  getAllConversations(limit = 100, offset = 0): Array<Conversation & { username: string; message_count: number }> {
+    return this.db.prepare(`
+      SELECT c.*, u.username, (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) as message_count
+      FROM conversations c
+      JOIN users u ON u.id = c.user_id
+      ORDER BY c.updated_at DESC
+      LIMIT ? OFFSET ?
+    `).all(limit, offset) as Array<Conversation & { username: string; message_count: number }>;
+  }
+
+  deleteConversation(id: number): void {
+    this.db.prepare("DELETE FROM conversations WHERE id = ?").run(id);
+  }
+
+  // ─── Messages ─────────────────────────────────────────────────────────────
+
+  addMessage(data: { conversation_id: number; role: string; content: string; sources_json?: string | null }): ChatMessage {
+    const stmt = this.db.prepare(
+      "INSERT INTO messages (conversation_id, role, content, sources_json) VALUES (?, ?, ?, ?)"
+    );
+    const info = stmt.run(data.conversation_id, data.role, data.content, data.sources_json || null);
+    // Also update conversation's updated_at
+    this.db.prepare("UPDATE conversations SET updated_at = unixepoch() WHERE id = ?").run(data.conversation_id);
+    return this.db.prepare("SELECT * FROM messages WHERE id = ?").get(info.lastInsertRowid) as ChatMessage;
+  }
+
+  getMessages(conversationId: number): ChatMessage[] {
+    return this.db.prepare(
+      "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC"
+    ).all(conversationId) as ChatMessage[];
+  }
+
+  // ─── Message Ratings ──────────────────────────────────────────────────────
+
+  rateMessage(data: { message_id: number; user_id: number; rating: number; feedback?: string | null }): void {
+    this.db.prepare(`
+      INSERT INTO message_ratings (message_id, user_id, rating, feedback)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(message_id, user_id) DO UPDATE SET rating = excluded.rating, feedback = excluded.feedback
+    `).run(data.message_id, data.user_id, data.rating, data.feedback || null);
+  }
+
+  getMessageRating(messageId: number, userId: number): MessageRating | undefined {
+    return this.db.prepare(
+      "SELECT * FROM message_ratings WHERE message_id = ? AND user_id = ?"
+    ).get(messageId, userId) as MessageRating | undefined;
+  }
+
+  getRatingDistribution(): Array<{ rating: number; count: number }> {
+    return this.db.prepare(
+      "SELECT rating, COUNT(*) as count FROM message_ratings GROUP BY rating ORDER BY rating"
+    ).all() as Array<{ rating: number; count: number }>;
+  }
+
+  getLowRatedMessages(limit = 20): Array<ChatMessage & { rating: number; feedback: string; username: string; rated_at: number }> {
+    return this.db.prepare(`
+      SELECT m.*, mr.rating, mr.feedback, u.username, mr.created_at as rated_at
+      FROM message_ratings mr
+      JOIN messages m ON m.id = mr.message_id
+      JOIN users u ON u.id = mr.user_id
+      WHERE mr.rating = 1 AND mr.feedback IS NOT NULL
+      ORDER BY mr.created_at DESC
+      LIMIT ?
+    `).all(limit) as Array<ChatMessage & { rating: number; feedback: string; username: string; rated_at: number }>;
+  }
+
+  getAverageRating(): number {
+    const row = this.db.prepare("SELECT AVG(rating) as avg FROM message_ratings").get() as { avg: number | null };
+    return row.avg ?? 0;
+  }
+
+  getAllRatedMessages(limit = 100): Array<{
+    id: number; conversation_id: number; content: string; role: string;
+    rating: number; feedback: string | null; username: string; rated_at: number;
+    question: string | null;
+  }> {
+    return this.db.prepare(`
+      SELECT m.id, m.conversation_id, m.content, m.role,
+             mr.rating, mr.feedback, u.username, mr.created_at as rated_at,
+             (SELECT prev.content FROM messages prev
+              WHERE prev.conversation_id = m.conversation_id
+                AND prev.role = 'user' AND prev.id < m.id
+              ORDER BY prev.id DESC LIMIT 1) as question
+      FROM message_ratings mr
+      JOIN messages m ON m.id = mr.message_id
+      JOIN users u ON u.id = mr.user_id
+      ORDER BY mr.created_at DESC
+      LIMIT ?
+    `).all(limit) as Array<{
+      id: number; conversation_id: number; content: string; role: string;
+      rating: number; feedback: string | null; username: string; rated_at: number;
+      question: string | null;
+    }>;
+  }
+
+  /** Get correction logs and behavioral cards linked to a conversation */
+  getActionsForConversation(conversationId: number): {
+    corrections: Array<{ id: number; qa_id: number; field_name: string; old_value: string | null; new_value: string | null; created_at: number }>;
+    behavioralCards: Array<{ id: number; title: string; instruction: string; type: string; scope: string; source: string; created_at: number }>;
+  } {
+    // Find correction logs where agent_question matches any user message in this conversation
+    const userMessages = this.db.prepare(
+      "SELECT content FROM messages WHERE conversation_id = ? AND role = 'user'"
+    ).all(conversationId) as Array<{ content: string }>;
+
+    const corrections: Array<{ id: number; qa_id: number; field_name: string; old_value: string | null; new_value: string | null; created_at: number }> = [];
+    for (const msg of userMessages) {
+      const logs = this.db.prepare(
+        "SELECT id, qa_id, field_name, old_value, new_value, created_at FROM correction_logs WHERE agent_question = ? ORDER BY created_at DESC"
+      ).all(msg.content) as typeof corrections;
+      corrections.push(...logs);
+    }
+
+    // Get suggested behavioral cards linked to correction logs from this conversation
+    const correctionIds = corrections.map(c => c.id);
+    let behavioralCards: Array<{ id: number; title: string; instruction: string; type: string; scope: string; source: string; created_at: number }> = [];
+    if (correctionIds.length > 0) {
+      const placeholders = correctionIds.map(() => "?").join(",");
+      behavioralCards = this.db.prepare(
+        `SELECT id, title, instruction, type, scope, source, created_at FROM behavioral_cards
+         WHERE correction_log_id IN (${placeholders}) ORDER BY created_at DESC`
+      ).all(...correctionIds) as typeof behavioralCards;
+    }
+
+    return { corrections, behavioralCards };
+  }
+
+  getRatingsForConversation(conversationId: number): Record<number, { rating: number; feedback: string | null }> {
+    const rows = this.db.prepare(`
+      SELECT mr.message_id, mr.rating, mr.feedback
+      FROM message_ratings mr
+      JOIN messages m ON m.id = mr.message_id
+      WHERE m.conversation_id = ?
+    `).all(conversationId) as Array<{ message_id: number; rating: number; feedback: string | null }>;
+
+    const map: Record<number, { rating: number; feedback: string | null }> = {};
+    for (const r of rows) map[r.message_id] = { rating: r.rating, feedback: r.feedback };
+    return map;
   }
 }

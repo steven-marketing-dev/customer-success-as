@@ -12,14 +12,17 @@
     "@anthropic-ai/sdk": "^0.40.0",
     "@google/generative-ai": "^0.24.1",
     "@hubspot/api-client": "^11.1.0",
+    "bcryptjs": "^3.0.3",
     "better-sqlite3": "^11.3.0",
     "cheerio": "^1.2.0",
+    "jose": "^6.2.1",
     "lucide-react": "^0.460.0",
     "next": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^20",
     "@types/react": "^19",

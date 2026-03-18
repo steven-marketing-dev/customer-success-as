@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect, FormEvent } from "react";
-import { Send, Bot, User, Loader2, BookOpen, AlertCircle, Globe, Tag, Flag, Check, Sparkles } from "lucide-react";
+import { useState, useRef, useEffect, FormEvent, useCallback } from "react";
+import { Send, Bot, User, Loader2, BookOpen, AlertCircle, Globe, Tag, Flag, Check, Sparkles, Plus, MessageSquare, Trash2, Star, ChevronLeft, ChevronRight, Users } from "lucide-react";
 import { type QAItem } from "./QACard";
 
 interface ArticleRef {
@@ -56,15 +56,33 @@ interface Message {
   terms?: TermRef[];
   refSections?: RefSectionRef[];
   streaming?: boolean;
+  messageId?: number | null;
+  rating?: number | null;
 }
 
-// Per-message correction state stored separately to avoid re-renders on all messages
 interface CorrectionData {
   state: CorrectionState;
   feedback: string;
   preview: CorrectionProposal[];
   behavioralSuggestion: BehavioralSuggestion | null;
   appliedCount: number;
+}
+
+interface ConversationItem {
+  id: number;
+  user_id: number;
+  title: string | null;
+  username: string;
+  message_count: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface AuthUser {
+  id: number;
+  username: string;
+  display_name: string | null;
+  role: "master" | "user";
 }
 
 const PALETTE = [
@@ -82,6 +100,102 @@ function getCategoryColor(name?: string | null) {
   if (!categoryColors[name]) categoryColors[name] = PALETTE[colorIdx++ % PALETTE.length];
   return categoryColors[name];
 }
+
+// ─── Star Rating ─────────────────────────────────────────────────────────
+
+function StarRating({ messageId, initialRating }: { messageId: number | null | undefined; initialRating?: number | null }) {
+  const [rating, setRating] = useState<number | null>(initialRating ?? null);
+  const [hovered, setHovered] = useState<number | null>(null);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  if (!messageId) return null;
+
+  const saveRating = async (value: number, fb?: string) => {
+    setSaving(true);
+    try {
+      await fetch(`/api/messages/${messageId}/rate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rating: value, feedback: fb || null }),
+      });
+      setRating(value);
+      setShowFeedback(false);
+    } catch { /* ignore */ }
+    setSaving(false);
+  };
+
+  const handleClick = (value: number) => {
+    if (value === 1) {
+      setRating(value);
+      setShowFeedback(true);
+    } else {
+      saveRating(value);
+    }
+  };
+
+  const colors = ["", "text-red-400", "text-amber-400", "text-emerald-400"];
+  const fillColors = ["", "fill-red-400 text-red-400", "fill-amber-400 text-amber-400", "fill-emerald-400 text-emerald-400"];
+
+  return (
+    <div className="w-full">
+      <div className="flex items-center gap-0.5">
+        {[1, 2, 3].map((v) => {
+          const active = (hovered ?? rating ?? 0) >= v;
+          return (
+            <button
+              key={v}
+              onClick={() => handleClick(v)}
+              onMouseEnter={() => setHovered(v)}
+              onMouseLeave={() => setHovered(null)}
+              disabled={saving}
+              className="p-0.5 hover:scale-110 transition-transform disabled:opacity-50"
+            >
+              <Star
+                size={14}
+                className={active ? fillColors[hovered ?? rating ?? v] : "text-slate-300"}
+              />
+            </button>
+          );
+        })}
+        {rating && (
+          <span className={`ml-1 text-[10px] font-medium ${colors[rating]}`}>
+            {rating === 1 ? "Bad" : rating === 2 ? "OK" : "Great"}
+          </span>
+        )}
+      </div>
+      {showFeedback && (
+        <div className="mt-1.5 space-y-1.5">
+          <textarea
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            placeholder="What went wrong? This helps improve future answers."
+            rows={2}
+            className="w-full rounded-lg border border-red-200 bg-red-50/30 px-2.5 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-red-300"
+          />
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => saveRating(1, feedback)}
+              disabled={saving}
+              className="rounded-md bg-red-500 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-red-600 disabled:opacity-50"
+            >
+              Submit
+            </button>
+            <button
+              onClick={() => { setShowFeedback(false); saveRating(1); }}
+              className="rounded-md px-2.5 py-1 text-[11px] text-slate-500 hover:bg-slate-100"
+            >
+              Skip feedback
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Sub-components (unchanged) ──────────────────────────────────────────
 
 function RefSectionCard({ section }: { section: RefSectionRef }) {
   const [expanded, setExpanded] = useState(false);
@@ -162,15 +276,8 @@ function SourceCard({ qa }: { qa: QAItem }) {
   );
 }
 
-function CorrectionPreviewCard({
-  proposal,
-  sourceQA,
-}: {
-  proposal: CorrectionProposal;
-  sourceQA?: QAItem;
-}) {
+function CorrectionPreviewCard({ proposal, sourceQA }: { proposal: CorrectionProposal; sourceQA?: QAItem }) {
   const fields = Object.entries(proposal.changes).filter(([, v]) => v !== undefined);
-
   return (
     <div className="border border-amber-200 rounded-lg bg-amber-50/50 p-3 text-xs space-y-2">
       <div className="font-medium text-slate-700">
@@ -181,10 +288,7 @@ function CorrectionPreviewCard({
         const oldStr = field === "resolution_steps"
           ? (() => { try { return JSON.parse(String(oldVal ?? "[]")).join(", "); } catch { return String(oldVal ?? ""); } })()
           : String(oldVal ?? "(empty)");
-        const newStr = field === "resolution_steps" && Array.isArray(newVal)
-          ? newVal.join(", ")
-          : String(newVal ?? "(empty)");
-
+        const newStr = field === "resolution_steps" && Array.isArray(newVal) ? newVal.join(", ") : String(newVal ?? "(empty)");
         return (
           <div key={field} className="space-y-1">
             <span className="font-medium text-slate-500 uppercase tracking-wider text-[10px]">{field}</span>
@@ -193,107 +297,52 @@ function CorrectionPreviewCard({
           </div>
         );
       })}
-      {proposal.reasoning && (
-        <p className="text-slate-400 italic">{proposal.reasoning}</p>
-      )}
+      {proposal.reasoning && <p className="text-slate-400 italic">{proposal.reasoning}</p>}
     </div>
   );
 }
 
-function CorrectionFlow({
-  msgIndex,
-  message,
-  corrections,
-  onCorrectionsChange,
-  userQuestion,
-}: {
-  msgIndex: number;
-  message: Message;
-  corrections: Record<number, CorrectionData>;
-  onCorrectionsChange: (idx: number, data: CorrectionData) => void;
-  userQuestion: string;
+function CorrectionFlow({ msgIndex, message, corrections, onCorrectionsChange, userQuestion }: {
+  msgIndex: number; message: Message; corrections: Record<number, CorrectionData>;
+  onCorrectionsChange: (idx: number, data: CorrectionData) => void; userQuestion: string;
 }) {
-  const data = corrections[msgIndex] ?? {
-    state: "idle" as CorrectionState,
-    feedback: "",
-    preview: [],
-    behavioralSuggestion: null,
-    appliedCount: 0,
-  };
-
-  const setState = (partial: Partial<CorrectionData>) => {
-    onCorrectionsChange(msgIndex, { ...data, ...partial });
-  };
+  const data = corrections[msgIndex] ?? { state: "idle" as CorrectionState, feedback: "", preview: [], behavioralSuggestion: null, appliedCount: 0 };
+  const setState = (partial: Partial<CorrectionData>) => onCorrectionsChange(msgIndex, { ...data, ...partial });
 
   const handleGeneratePreview = async () => {
     if (!data.feedback.trim()) return;
     setState({ state: "loading" });
-
     try {
       const res = await fetch("/api/agent/correct", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agentQuestion: userQuestion,
-          agentAnswer: message.content,
-          feedback: data.feedback,
-          sourceIds: (message.sources ?? []).map((s) => s.id),
-        }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentQuestion: userQuestion, agentAnswer: message.content, feedback: data.feedback, sourceIds: (message.sources ?? []).map((s) => s.id) }),
       });
-
-      if (!res.ok) throw new Error("Failed to generate preview");
+      if (!res.ok) throw new Error("Failed");
       const result = await res.json();
-
-      setState({
-        state: "preview",
-        preview: result.corrections ?? [],
-        behavioralSuggestion: result.behavioral_suggestion ?? null,
-      });
-    } catch {
-      setState({ state: "writing" });
-    }
+      setState({ state: "preview", preview: result.corrections ?? [], behavioralSuggestion: result.behavioral_suggestion ?? null });
+    } catch { setState({ state: "writing" }); }
   };
 
   const handleApply = async () => {
     setState({ state: "loading" });
-
     try {
       const res = await fetch("/api/agent/correct/apply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agentQuestion: userQuestion,
-          agentAnswer: message.content,
-          feedback: data.feedback,
-          corrections: data.preview,
-        }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentQuestion: userQuestion, agentAnswer: message.content, feedback: data.feedback, corrections: data.preview }),
       });
-
-      if (!res.ok) throw new Error("Failed to apply corrections");
+      if (!res.ok) throw new Error("Failed");
       const result = await res.json();
-
       setState({ state: "applied", appliedCount: result.updated?.length ?? 0 });
-    } catch {
-      setState({ state: "preview" });
-    }
+    } catch { setState({ state: "preview" }); }
   };
 
   const handleCreateBehavioralCard = async () => {
     if (!data.behavioralSuggestion) return;
     const s = data.behavioralSuggestion;
-
     await fetch("/api/behavioral-cards", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: s.title,
-        instruction: s.instruction,
-        type: s.type,
-        scope: s.scope,
-        source: "suggested",
-      }),
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: s.title, instruction: s.instruction, type: s.type, scope: s.scope, source: "suggested" }),
     });
-
     setState({ behavioralSuggestion: null });
   };
 
@@ -302,142 +351,140 @@ function CorrectionFlow({
   return (
     <div className="w-full">
       {data.state === "idle" && (
-        <button
-          onClick={() => setState({ state: "writing" })}
-          className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-amber-600 transition-colors mt-1"
-        >
-          <Flag size={11} />
-          <span>Correct this response</span>
+        <button onClick={() => setState({ state: "writing" })} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-amber-600 transition-colors mt-1">
+          <Flag size={11} /><span>Correct this response</span>
         </button>
       )}
-
       {data.state === "writing" && (
         <div className="mt-2 space-y-2 border border-amber-200 rounded-lg bg-amber-50/30 p-3">
-          <textarea
-            value={data.feedback}
-            onChange={(e) => setState({ feedback: e.target.value })}
-            placeholder="What's wrong or needs changing? (e.g., 'The steps are outdated, the new flow uses Settings > Security')"
-            rows={3}
-            className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
-          />
+          <textarea value={data.feedback} onChange={(e) => setState({ feedback: e.target.value })} placeholder="What's wrong or needs changing?" rows={3}
+            className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400" />
           <div className="flex gap-2">
-            <button
-              onClick={handleGeneratePreview}
-              disabled={!data.feedback.trim()}
-              className="flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-600 disabled:opacity-50 transition-colors"
-            >
-              <Sparkles className="h-3 w-3" />
-              Generate Preview
+            <button onClick={handleGeneratePreview} disabled={!data.feedback.trim()} className="flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-600 disabled:opacity-50">
+              <Sparkles className="h-3 w-3" />Generate Preview
             </button>
-            <button
-              onClick={() => setState({ state: "idle", feedback: "" })}
-              className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100 transition-colors"
-            >
-              Cancel
-            </button>
+            <button onClick={() => setState({ state: "idle", feedback: "" })} className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100">Cancel</button>
           </div>
         </div>
       )}
-
       {data.state === "loading" && (
         <div className="mt-2 flex items-center gap-2 text-xs text-amber-600 border border-amber-200 rounded-lg bg-amber-50/30 p-3">
-          <Loader2 size={12} className="animate-spin" />
-          <span>Analyzing feedback and generating corrections...</span>
+          <Loader2 size={12} className="animate-spin" /><span>Analyzing feedback...</span>
         </div>
       )}
-
       {data.state === "preview" && (
         <div className="mt-2 space-y-3 border border-amber-200 rounded-lg bg-amber-50/30 p-3">
-          <div className="text-xs font-medium text-slate-600">
-            Proposed corrections ({data.preview.length} card{data.preview.length !== 1 ? "s" : ""}):
-          </div>
-
-          {data.preview.length === 0 && (
-            <p className="text-xs text-slate-400">No content changes needed for the source cards.</p>
-          )}
-
-          {data.preview.map((proposal) => (
-            <CorrectionPreviewCard
-              key={proposal.qa_id}
-              proposal={proposal}
-              sourceQA={message.sources?.find((s) => s.id === proposal.qa_id)}
-            />
-          ))}
-
+          <div className="text-xs font-medium text-slate-600">Proposed corrections ({data.preview.length} card{data.preview.length !== 1 ? "s" : ""}):</div>
+          {data.preview.length === 0 && <p className="text-xs text-slate-400">No content changes needed.</p>}
+          {data.preview.map((p) => <CorrectionPreviewCard key={p.qa_id} proposal={p} sourceQA={message.sources?.find((s) => s.id === p.qa_id)} />)}
           {data.behavioralSuggestion && (
             <div className="border border-indigo-200 rounded-lg bg-indigo-50/50 p-3 text-xs space-y-2">
-              <div className="font-medium text-indigo-700 flex items-center gap-1.5">
-                <Sparkles className="h-3 w-3" />
-                Suggested behavioral rule
-              </div>
-              <p className="text-slate-700">
-                <span className="font-medium">{data.behavioralSuggestion.title}:</span>{" "}
-                {data.behavioralSuggestion.instruction}
-              </p>
-              <div className="flex gap-1.5">
-                <span className="px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-medium">
-                  {data.behavioralSuggestion.scope}
-                </span>
-                <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-medium">
-                  {data.behavioralSuggestion.type}
-                </span>
-              </div>
-              <button
-                onClick={handleCreateBehavioralCard}
-                className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-indigo-700 transition-colors"
-              >
-                Create Rule
-              </button>
+              <div className="font-medium text-indigo-700 flex items-center gap-1.5"><Sparkles className="h-3 w-3" />Suggested behavioral rule</div>
+              <p className="text-slate-700"><span className="font-medium">{data.behavioralSuggestion.title}:</span> {data.behavioralSuggestion.instruction}</p>
+              <button onClick={handleCreateBehavioralCard} className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-indigo-700">Create Rule</button>
             </div>
           )}
-
           <div className="flex gap-2 pt-1">
             {data.preview.length > 0 && (
-              <button
-                onClick={handleApply}
-                className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 transition-colors"
-              >
-                <Check className="h-3 w-3" />
-                Apply Corrections
-              </button>
+              <button onClick={handleApply} className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"><Check className="h-3 w-3" />Apply</button>
             )}
-            <button
-              onClick={() => setState({ state: "idle", feedback: "", preview: [], behavioralSuggestion: null })}
-              className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100 transition-colors"
-            >
-              Discard
-            </button>
+            <button onClick={() => setState({ state: "idle", feedback: "", preview: [], behavioralSuggestion: null })} className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100">Discard</button>
           </div>
         </div>
       )}
-
       {data.state === "applied" && (
-        <div className="mt-2 flex items-center gap-1.5 text-xs text-emerald-600">
-          <Check size={12} />
-          <span>{data.appliedCount} QA card{data.appliedCount !== 1 ? "s" : ""} updated</span>
-        </div>
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-emerald-600"><Check size={12} /><span>{data.appliedCount} QA card{data.appliedCount !== 1 ? "s" : ""} updated</span></div>
       )}
     </div>
   );
 }
 
-export function AgentPanel() {
+// ─── Main Panel ──────────────────────────────────────────────────────────
+
+export function AgentPanel({ user }: { user: AuthUser | null }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [corrections, setCorrections] = useState<Record<number, CorrectionData>>({});
+  const [conversationId, setConversationId] = useState<number | null>(null);
+  const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarFilter, setSidebarFilter] = useState<"mine" | "all">("mine");
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const loadConversations = useCallback(async () => {
+    try {
+      const url = sidebarFilter === "mine" && user ? `/api/conversations?userId=${user.id}` : "/api/conversations";
+      const res = await fetch(url);
+      if (res.ok) setConversations(await res.json());
+    } catch { /* ignore */ }
+  }, [sidebarFilter, user]);
+
+  useEffect(() => { loadConversations(); }, [loadConversations]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Listen for external "load-conversation" events (e.g. from ratings history)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const convId = (e as CustomEvent).detail?.conversationId;
+      if (convId) loadConversation(convId);
+    };
+    window.addEventListener("load-conversation", handler);
+    return () => window.removeEventListener("load-conversation", handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const loadConversation = async (convId: number) => {
+    try {
+      const res = await fetch(`/api/conversations/${convId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setConversationId(convId);
+      setCorrections({});
+
+      const loaded: Message[] = data.messages.map((m: { id: number; role: "user" | "assistant"; content: string; sources_json: string | null }) => {
+        const msg: Message = { role: m.role, content: m.content, messageId: m.id };
+        if (m.sources_json) {
+          try {
+            const parsed = JSON.parse(m.sources_json);
+            msg.sources = parsed.sources;
+            msg.articles = parsed.articles;
+            msg.terms = parsed.terms;
+            msg.refSections = parsed.refSections;
+          } catch { /* ignore */ }
+        }
+        // Attach saved rating
+        if (m.role === "assistant" && data.ratings?.[m.id]) {
+          msg.rating = data.ratings[m.id].rating;
+        }
+        return msg;
+      });
+      setMessages(loaded);
+    } catch { /* ignore */ }
+  };
+
+  const startNewChat = () => {
+    setConversationId(null);
+    setMessages([]);
+    setCorrections({});
+    inputRef.current?.focus();
+  };
+
+  const deleteConversation = async (convId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await fetch(`/api/conversations/${convId}`, { method: "DELETE" });
+    if (conversationId === convId) startNewChat();
+    loadConversations();
+  };
+
   const handleCorrectionChange = (idx: number, data: CorrectionData) => {
     setCorrections((prev) => ({ ...prev, [idx]: data }));
   };
 
-  // Find the user question that preceded a given assistant message
   const getUserQuestion = (assistantIdx: number): string => {
     for (let i = assistantIdx - 1; i >= 0; i--) {
       if (messages[i].role === "user") return messages[i].content;
@@ -455,12 +502,7 @@ export function AgentPanel() {
 
     const userMessage: Message = { role: "user", content: question };
     setMessages((prev) => [...prev, userMessage]);
-
-    // Add placeholder assistant message
-    setMessages((prev) => [
-      ...prev,
-      { role: "assistant", content: "", streaming: true },
-    ]);
+    setMessages((prev) => [...prev, { role: "assistant", content: "", streaming: true }]);
 
     const history = messages.map((m) => ({ role: m.role, content: m.content }));
 
@@ -468,7 +510,7 @@ export function AgentPanel() {
       const res = await fetch("/api/agent/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, history }),
+        body: JSON.stringify({ question, history, conversationId }),
       });
 
       if (!res.ok || !res.body) throw new Error("Failed to connect to agent");
@@ -493,15 +535,20 @@ export function AgentPanel() {
 
             if (event.type === "delta") {
               streamedText += event.text;
-              // Strip any partial SOURCES/REFS lines from display
               const visible = streamedText
                 .replace(/\n?SOURCES:\[[^\]]*\]?\s*/m, "")
-                .replace(/\n?REFS:\[[^\]]*\]?\s*/m, "");
+                .replace(/\n?REFS:\[[^\]]*\]?\s*/m, "")
+                .replace(/\n?ARTICLES:\[[^\]]*\]?\s*/m, "");
               setMessages((prev) => [
                 ...prev.slice(0, -1),
                 { role: "assistant", content: visible, streaming: true },
               ]);
             } else if (event.type === "done") {
+              // Update conversation ID for new conversations
+              if (event.conversationId && !conversationId) {
+                setConversationId(event.conversationId);
+                loadConversations();
+              }
               setMessages((prev) => [
                 ...prev.slice(0, -1),
                 {
@@ -512,6 +559,7 @@ export function AgentPanel() {
                   terms: event.terms ?? [],
                   refSections: event.refSections ?? [],
                   streaming: false,
+                  messageId: event.messageId ?? null,
                 },
               ]);
             } else if (event.type === "error") {
@@ -535,215 +583,233 @@ export function AgentPanel() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-10rem)] max-h-[800px]">
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto space-y-6 pr-1 pb-4">
-        {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center text-slate-400 gap-3">
-            <div className="w-14 h-14 rounded-2xl bg-indigo-50 flex items-center justify-center">
-              <Bot size={28} className="text-indigo-400" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-slate-600">Ask anything about your customers</p>
-              <p className="text-xs mt-1">Answers are grounded in support tickets, documentation articles, and glossary terms</p>
-            </div>
-            <div className="grid grid-cols-1 gap-2 mt-2 w-full max-w-lg">
-              {[
-                "Which assessments do you recommend for measuring problem-solving skills and customer service abilities?",
-                "How do I set up automated candidate screening for a high-volume role?",
-                "What's the best way to share assessment results with my hiring team?",
-                "Can you walk me through configuring webhooks for our ATS integration?",
-              ].map((q) => (
-                <button
-                  key={q}
-                  onClick={() => { setInput(q); inputRef.current?.focus(); }}
-                  className="text-left px-3 py-2.5 rounded-xl border border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50 text-xs text-slate-600 transition-all"
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          messages.map((msg, i) => (
-            <div key={i} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-              {msg.role === "assistant" && (
-                <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Bot size={14} className="text-indigo-600" />
-                </div>
-              )}
+    <div className="flex h-[calc(100vh-10rem)] max-h-[800px]">
+      {/* Sidebar */}
+      <div className={`${sidebarOpen ? "w-64" : "w-0"} transition-all duration-200 overflow-hidden flex-shrink-0 border-r border-slate-200 bg-slate-50/50 flex flex-col`}>
+        <div className="p-3 border-b border-slate-200">
+          <button
+            onClick={startNewChat}
+            className="w-full flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700 transition-colors"
+          >
+            <Plus size={14} />New Chat
+          </button>
+        </div>
 
-              <div className={`max-w-[80%] space-y-3 ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}>
-                <div
-                  className={`px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
-                    msg.role === "user"
-                      ? "bg-indigo-600 text-white rounded-tr-sm"
-                      : "bg-white border border-slate-200 text-slate-800 rounded-tl-sm shadow-sm"
-                  }`}
-                >
-                  {msg.content || (msg.streaming && (
-                    <span className="inline-flex gap-1 items-center text-slate-400">
-                      <Loader2 size={12} className="animate-spin" />
-                      Thinking...
-                    </span>
-                  ))}
-                  {msg.streaming && msg.content && (
-                    <span className="inline-block w-0.5 h-4 bg-indigo-400 animate-pulse ml-0.5 align-middle" />
+        {/* Filter tabs */}
+        <div className="flex border-b border-slate-200">
+          <button
+            onClick={() => setSidebarFilter("mine")}
+            className={`flex-1 py-2 text-xs font-medium transition-colors ${sidebarFilter === "mine" ? "text-indigo-600 border-b-2 border-indigo-600" : "text-slate-400 hover:text-slate-600"}`}
+          >
+            My Chats
+          </button>
+          <button
+            onClick={() => setSidebarFilter("all")}
+            className={`flex-1 py-2 text-xs font-medium transition-colors flex items-center justify-center gap-1 ${sidebarFilter === "all" ? "text-indigo-600 border-b-2 border-indigo-600" : "text-slate-400 hover:text-slate-600"}`}
+          >
+            <Users size={11} />All
+          </button>
+        </div>
+
+        {/* Conversation list */}
+        <div className="flex-1 overflow-y-auto">
+          {conversations.length === 0 ? (
+            <p className="text-xs text-slate-400 text-center py-6">No conversations yet</p>
+          ) : (
+            conversations.map((c) => (
+              <div
+                key={c.id}
+                onClick={() => loadConversation(c.id)}
+                className={`group px-3 py-2.5 border-b border-slate-100 cursor-pointer hover:bg-white transition-colors ${conversationId === c.id ? "bg-white border-l-2 border-l-indigo-500" : ""}`}
+              >
+                <div className="flex items-start justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <MessageSquare size={11} className="text-slate-400 flex-shrink-0" />
+                    <span className="text-xs font-medium text-slate-700 truncate">{c.title || "Untitled"}</span>
+                  </div>
+                  {(user?.role === "master" || c.user_id === user?.id) && (
+                    <button
+                      onClick={(e) => deleteConversation(c.id, e)}
+                      className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-red-500 transition-all"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  {sidebarFilter === "all" && c.username !== user?.username && (
+                    <span className="text-[10px] text-indigo-500 font-medium">{c.username}</span>
+                  )}
+                  <span className="text-[10px] text-slate-400">{c.message_count} msgs</span>
+                  <span className="text-[10px] text-slate-400">{new Date(c.updated_at * 1000).toLocaleDateString()}</span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Toggle button */}
+      <button
+        onClick={() => setSidebarOpen((p) => !p)}
+        className="flex items-center justify-center w-5 bg-slate-100 hover:bg-slate-200 border-r border-slate-200 transition-colors flex-shrink-0"
+      >
+        {sidebarOpen ? <ChevronLeft size={12} className="text-slate-400" /> : <ChevronRight size={12} className="text-slate-400" />}
+      </button>
+
+      {/* Chat area */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto space-y-6 px-4 pb-4">
+          {messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center text-slate-400 gap-3">
+              <div className="w-14 h-14 rounded-2xl bg-indigo-50 flex items-center justify-center">
+                <Bot size={28} className="text-indigo-400" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-slate-600">Ask anything about your customers</p>
+                <p className="text-xs mt-1">Answers are grounded in support tickets, documentation, and glossary terms</p>
+              </div>
+              <div className="grid grid-cols-1 gap-2 mt-2 w-full max-w-lg">
+                {[
+                  "Which assessments do you recommend for measuring problem-solving skills and customer service abilities?",
+                  "How do I set up automated candidate screening for a high-volume role?",
+                  "What's the best way to share assessment results with my hiring team?",
+                  "Can you walk me through configuring webhooks for our ATS integration?",
+                ].map((q) => (
+                  <button key={q} onClick={() => { setInput(q); inputRef.current?.focus(); }}
+                    className="text-left px-3 py-2.5 rounded-xl border border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50 text-xs text-slate-600 transition-all">
+                    {q}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            messages.map((msg, i) => (
+              <div key={i} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                {msg.role === "assistant" && (
+                  <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Bot size={14} className="text-indigo-600" />
+                  </div>
+                )}
+
+                <div className={`max-w-[80%] space-y-3 ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}>
+                  <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
+                    msg.role === "user" ? "bg-indigo-600 text-white rounded-tr-sm" : "bg-white border border-slate-200 text-slate-800 rounded-tl-sm shadow-sm"
+                  }`}>
+                    {msg.content || (msg.streaming && (
+                      <span className="inline-flex gap-1 items-center text-slate-400"><Loader2 size={12} className="animate-spin" />Thinking...</span>
+                    ))}
+                    {msg.streaming && msg.content && <span className="inline-block w-0.5 h-4 bg-indigo-400 animate-pulse ml-0.5 align-middle" />}
+                  </div>
+
+                  {/* Star rating */}
+                  {!msg.streaming && msg.role === "assistant" && msg.content && !msg.content.startsWith("Error:") && !msg.content.startsWith("Connection error:") && (
+                    <StarRating messageId={msg.messageId} initialRating={msg.rating} />
+                  )}
+
+                  {/* Sources */}
+                  {!msg.streaming && msg.sources && msg.sources.length > 0 && (
+                    <div className="w-full">
+                      <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
+                        <BookOpen size={11} /><span>{msg.sources.length} Q&A source{msg.sources.length !== 1 ? "s" : ""}</span>
+                      </div>
+                      <div className="grid grid-cols-1 gap-2">
+                        {msg.sources.map((qa) => <SourceCard key={qa.id} qa={qa} />)}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Articles */}
+                  {!msg.streaming && msg.articles && msg.articles.length > 0 && (
+                    <div className="w-full">
+                      <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
+                        <Globe size={11} /><span>{msg.articles.length} article{msg.articles.length !== 1 ? "s" : ""}</span>
+                      </div>
+                      <div className="grid grid-cols-1 gap-1.5">
+                        {msg.articles.map((a) => (
+                          <div key={a.id} className="bg-white border border-slate-200 rounded-lg overflow-hidden text-xs">
+                            <a href={a.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-3 py-2 hover:bg-cyan-50 transition-colors">
+                              <Globe size={12} className="text-cyan-500 flex-shrink-0" />
+                              <span className="text-slate-800 font-medium truncate">{a.title}</span>
+                              {a.category && <span className="ml-auto px-1.5 py-0.5 rounded-full bg-cyan-100 text-cyan-700 font-medium flex-shrink-0">{a.category}</span>}
+                            </a>
+                            {a.excerpt && (
+                              <div className="px-3 py-2 border-t border-slate-100 bg-slate-50">
+                                <p className="text-slate-600 leading-relaxed border-l-2 border-cyan-200 pl-2 italic">{a.excerpt}</p>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Glossary terms */}
+                  {!msg.streaming && msg.terms && msg.terms.length > 0 && (
+                    <div className="w-full">
+                      <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400"><Tag size={11} /><span>Glossary terms</span></div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {msg.terms.map((t) => (
+                          <span key={t.id} title={t.definition} className="px-2 py-1 rounded-full bg-violet-100 text-violet-700 text-xs font-medium cursor-default">{t.name}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Ref sections */}
+                  {!msg.streaming && msg.refSections && msg.refSections.length > 0 && (
+                    <div className="w-full">
+                      <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
+                        <BookOpen size={11} /><span>{msg.refSections.length} reference section{msg.refSections.length !== 1 ? "s" : ""}</span>
+                      </div>
+                      <div className="grid grid-cols-1 gap-2">
+                        {msg.refSections.map((r) => <RefSectionCard key={r.id} section={r} />)}
+                      </div>
+                    </div>
+                  )}
+
+                  {!msg.streaming && (!msg.sources || msg.sources.length === 0) && (!msg.articles || msg.articles.length === 0) && (!msg.refSections || msg.refSections.length === 0) && msg.role === "assistant" && msg.content && (
+                    <div className="flex items-center gap-1.5 text-xs text-amber-500"><AlertCircle size={11} /><span>No matching entries found</span></div>
+                  )}
+
+                  {/* Correction flow */}
+                  {!msg.streaming && msg.role === "assistant" && msg.content && (
+                    <CorrectionFlow msgIndex={i} message={msg} corrections={corrections} onCorrectionsChange={handleCorrectionChange} userQuestion={getUserQuestion(i)} />
                   )}
                 </div>
 
-                {/* Sources */}
-                {!msg.streaming && msg.sources && msg.sources.length > 0 && (
-                  <div className="w-full">
-                    <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
-                      <BookOpen size={11} />
-                      <span>{msg.sources.length} Q&A source{msg.sources.length !== 1 ? "s" : ""} from support tickets</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2">
-                      {msg.sources.map((qa) => (
-                        <SourceCard key={qa.id} qa={qa} />
-                      ))}
-                    </div>
+                {msg.role === "user" && (
+                  <div className="w-7 h-7 rounded-lg bg-slate-200 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <User size={14} className="text-slate-600" />
                   </div>
-                )}
-
-                {/* Article references */}
-                {!msg.streaming && msg.articles && msg.articles.length > 0 && (
-                  <div className="w-full">
-                    <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
-                      <Globe size={11} />
-                      <span>{msg.articles.length} article{msg.articles.length !== 1 ? "s" : ""} from documentation</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-1.5">
-                      {msg.articles.map((a) => (
-                        <div key={a.id} className="bg-white border border-slate-200 rounded-lg overflow-hidden text-xs">
-                          <a
-                            href={a.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-2 px-3 py-2 hover:bg-cyan-50 transition-colors"
-                          >
-                            <Globe size={12} className="text-cyan-500 flex-shrink-0" />
-                            <span className="text-slate-800 font-medium truncate">{a.title}</span>
-                            {a.category && (
-                              <span className="ml-auto px-1.5 py-0.5 rounded-full bg-cyan-100 text-cyan-700 font-medium flex-shrink-0">
-                                {a.category}
-                              </span>
-                            )}
-                          </a>
-                          {a.excerpt && (
-                            <div className="px-3 py-2 border-t border-slate-100 bg-slate-50">
-                              <p className="text-slate-600 leading-relaxed border-l-2 border-cyan-200 pl-2 italic">{a.excerpt}</p>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Glossary terms used */}
-                {!msg.streaming && msg.terms && msg.terms.length > 0 && (
-                  <div className="w-full">
-                    <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
-                      <Tag size={11} />
-                      <span>Glossary terms referenced</span>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {msg.terms.map((t) => (
-                        <span
-                          key={t.id}
-                          title={t.definition}
-                          className="px-2 py-1 rounded-full bg-violet-100 text-violet-700 text-xs font-medium cursor-default"
-                        >
-                          {t.name}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Reference document sections cited */}
-                {!msg.streaming && msg.refSections && msg.refSections.length > 0 && (
-                  <div className="w-full">
-                    <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
-                      <BookOpen size={11} />
-                      <span>{msg.refSections.length} reference section{msg.refSections.length !== 1 ? "s" : ""} from documents</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2">
-                      {msg.refSections.map((r) => (
-                        <RefSectionCard key={r.id} section={r} />
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {!msg.streaming && (!msg.sources || msg.sources.length === 0) && (!msg.articles || msg.articles.length === 0) && (!msg.refSections || msg.refSections.length === 0) && msg.role === "assistant" && msg.content && (
-                  <div className="flex items-center gap-1.5 text-xs text-amber-500">
-                    <AlertCircle size={11} />
-                    <span>No matching entries found in knowledge base</span>
-                  </div>
-                )}
-
-                {/* Correction flow */}
-                {!msg.streaming && msg.role === "assistant" && msg.content && (
-                  <CorrectionFlow
-                    msgIndex={i}
-                    message={msg}
-                    corrections={corrections}
-                    onCorrectionsChange={handleCorrectionChange}
-                    userQuestion={getUserQuestion(i)}
-                  />
                 )}
               </div>
+            ))
+          )}
+          <div ref={bottomRef} />
+        </div>
 
-              {msg.role === "user" && (
-                <div className="w-7 h-7 rounded-lg bg-slate-200 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <User size={14} className="text-slate-600" />
-                </div>
-              )}
-            </div>
-          ))
-        )}
-        <div ref={bottomRef} />
+        {/* Input */}
+        <form onSubmit={send} className="mx-4 mt-3 flex items-end rounded-xl border border-slate-200 bg-white shadow-sm focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-transparent transition">
+          <textarea
+            ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
+            placeholder="Ask a question about your customers..." rows={1} disabled={loading}
+            className="flex-1 resize-none pl-4 pr-2 py-2.5 bg-transparent text-sm text-slate-900 placeholder-slate-400 focus:outline-none disabled:opacity-50"
+            style={{ maxHeight: "120px", overflowY: "auto" }}
+            onInput={(e) => { const t = e.currentTarget; t.style.height = "auto"; t.style.height = `${Math.min(t.scrollHeight, 120)}px`; }}
+          />
+          <button type="submit" disabled={loading || !input.trim()}
+            className="flex-shrink-0 m-1.5 w-8 h-8 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+          </button>
+        </form>
+        <p className="text-center text-xs text-slate-400 mt-1.5">Enter to send · Shift+Enter for new line</p>
       </div>
-
-      {/* Input */}
-      <form onSubmit={send} className="mt-3 flex items-end rounded-xl border border-slate-200 bg-white shadow-sm focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-transparent transition">
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Ask a question about your customers..."
-          rows={1}
-          disabled={loading}
-          className="flex-1 resize-none pl-4 pr-2 py-2.5 bg-transparent text-sm text-slate-900 placeholder-slate-400 focus:outline-none disabled:opacity-50"
-          style={{ maxHeight: "120px", overflowY: "auto" }}
-          onInput={(e) => {
-            const t = e.currentTarget;
-            t.style.height = "auto";
-            t.style.height = `${Math.min(t.scrollHeight, 120)}px`;
-          }}
-        />
-        <button
-          type="submit"
-          disabled={loading || !input.trim()}
-          className="flex-shrink-0 m-1.5 w-8 h-8 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          {loading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-        </button>
-      </form>
-      <p className="text-center text-xs text-slate-400 mt-1.5">
-        Enter to send · Shift+Enter for new line
-      </p>
     </div>
   );
 }

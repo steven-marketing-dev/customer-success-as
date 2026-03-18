@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
+import { hashSync } from "bcryptjs";
 
 // Types
 
@@ -122,6 +123,41 @@ export interface RefDocSection {
   content_hash: string;
   created_at: number;
   updated_at: number;
+}
+
+export interface User {
+  id: number;
+  username: string;
+  password_hash: string;
+  display_name: string | null;
+  role: "master" | "user";
+  created_at: number;
+}
+
+export interface Conversation {
+  id: number;
+  user_id: number;
+  title: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ChatMessage {
+  id: number;
+  conversation_id: number;
+  role: "user" | "assistant";
+  content: string;
+  sources_json: string | null;
+  created_at: number;
+}
+
+export interface MessageRating {
+  id: number;
+  message_id: number;
+  user_id: number;
+  rating: 1 | 2 | 3;
+  feedback: string | null;
+  created_at: number;
 }
 
 // Singleton DB connection
@@ -283,6 +319,46 @@ function initDb(db: Database.Database) {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
     CREATE INDEX IF NOT EXISTS idx_ref_doc_sections_doc ON ref_doc_sections(doc_id);
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      display_name TEXT,
+      role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('master', 'user')),
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS conversations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
+
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+      content TEXT NOT NULL,
+      sources_json TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+
+    CREATE TABLE IF NOT EXISTS message_ratings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      rating INTEGER NOT NULL CHECK(rating IN (1, 2, 3)),
+      feedback TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(message_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_message_ratings_message ON message_ratings(message_id);
+    CREATE INDEX IF NOT EXISTS idx_message_ratings_rating ON message_ratings(rating);
   `);
 
   // Migrations: add columns if they don't exist yet
@@ -380,6 +456,19 @@ function initDb(db: Database.Database) {
       `);
     }
   } catch { /* source tables may be empty */ }
+
+  // Seed master account if no users exist
+  try {
+    const userCount = (db.prepare("SELECT COUNT(*) as n FROM users").get() as { n: number }).n;
+    if (userCount === 0) {
+      const username = process.env.MASTER_USERNAME ?? "admin";
+      const password = process.env.MASTER_PASSWORD ?? "changeme";
+      const hash = hashSync(password, 10);
+      db.prepare(
+        "INSERT INTO users (username, password_hash, display_name, role) VALUES (?, ?, ?, ?)"
+      ).run(username, hash, "Administrator", "master");
+    }
+  } catch { /* users table may not exist yet */ }
 }
 
 export function getDb(): Database.Database {
