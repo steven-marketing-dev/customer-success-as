@@ -23,55 +23,55 @@ const cards = [
     key: "tickets" as const,
     label: "Tickets",
     icon: Ticket,
-    color: "bg-violet-50 text-violet-600",
-    ring: "ring-violet-100",
+    iconBg: "bg-mint-50",
+    iconColor: "text-mint-500",
   },
   {
     key: "qa_pairs" as const,
     label: "Q&A Pairs",
     icon: MessageSquare,
-    color: "bg-blue-50 text-blue-600",
-    ring: "ring-blue-100",
+    iconBg: "bg-blue-50",
+    iconColor: "text-blue-500",
   },
   {
     key: "categories" as const,
     label: "Categories",
     icon: Tag,
-    color: "bg-emerald-50 text-emerald-600",
-    ring: "ring-emerald-100",
+    iconBg: "bg-violet-50",
+    iconColor: "text-violet-500",
   },
 ];
 
 export function StatsGrid({ stats }: { stats: Stats }) {
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      {cards.map(({ key, label, icon: Icon, color, ring }) => (
+      {cards.map(({ key, label, icon: Icon, iconBg, iconColor }) => (
         <div
           key={key}
-          className={`bg-white rounded-xl border border-slate-200 p-5 flex items-center gap-4 shadow-sm`}
+          className="card-warm p-5 flex items-center gap-4 fade-up"
         >
-          <div className={`p-2.5 rounded-lg ring-1 ${color} ${ring}`}>
+          <div className={`p-2.5 rounded-xl ${iconBg} ${iconColor}`}>
             <Icon size={20} />
           </div>
           <div>
-            <p className="text-2xl font-bold text-slate-900">
+            <p className="font-display text-2xl font-bold text-warm-800">
               {stats[key].toLocaleString()}
             </p>
-            <p className="text-sm text-slate-500">{label}</p>
+            <p className="text-sm text-warm-500">{label}</p>
           </div>
         </div>
       ))}
 
       {/* Last sync card */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 flex items-center gap-4 shadow-sm">
-        <div className="p-2.5 rounded-lg ring-1 bg-amber-50 text-amber-600 ring-amber-100">
+      <div className="card-warm p-5 flex items-center gap-4 fade-up">
+        <div className="p-2.5 rounded-xl bg-amber-50 text-amber-500">
           <Clock size={20} />
         </div>
         <div>
-          <p className="text-sm font-semibold text-slate-900">
+          <p className="font-display text-sm font-semibold text-warm-800">
             {timeAgo(stats.last_sync_at)}
           </p>
-          <p className="text-sm text-slate-500">Last sync</p>
+          <p className="text-sm text-warm-500">Last sync</p>
         </div>
       </div>
     </div>

@@ -72,7 +72,7 @@ export function SearchPanel({
     "bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200",
     "bg-orange-100 text-orange-700 border-orange-200 hover:bg-orange-200",
     "bg-pink-100 text-pink-700 border-pink-200 hover:bg-pink-200",
-    "bg-teal-100 text-teal-700 border-teal-200 hover:bg-teal-200",
+    "bg-mint-100 text-mint-700 border-mint-200 hover:bg-mint-200",
   ];
 
   const selectedCatName = selectedCategory
@@ -92,7 +92,7 @@ export function SearchPanel({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search the knowledge base..."
-          className="w-full pl-10 pr-10 py-3 rounded-xl border border-slate-200 bg-white text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent shadow-sm transition"
+          className="w-full pl-10 pr-10 py-3 rounded-xl border border-slate-200 bg-white text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-mint-500 focus:border-transparent shadow-sm transition"
         />
         {query && (
           <button
@@ -107,9 +107,9 @@ export function SearchPanel({
       {/* Active filter + toggle */}
       <div className="flex items-center gap-2">
         {selectedCatName && (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-indigo-600 text-white">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-mint-600 text-white">
             {selectedCatName}
-            <button onClick={() => onCategoryChange?.(null)} className="hover:bg-indigo-500 rounded-full p-0.5">
+            <button onClick={() => onCategoryChange?.(null)} className="hover:bg-mint-500 rounded-full p-0.5">
               <X size={12} />
             </button>
           </span>
@@ -132,7 +132,7 @@ export function SearchPanel({
             onClick={() => onCategoryChange?.(null)}
             className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
               selectedCategory === null
-                ? "bg-indigo-600 text-white border-indigo-600"
+                ? "bg-mint-600 text-white border-mint-600"
                 : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
             }`}
           >
@@ -144,7 +144,7 @@ export function SearchPanel({
               onClick={() => onCategoryChange?.(selectedCategory === cat.id ? null : cat.id)}
               className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
                 selectedCategory === cat.id
-                  ? "bg-indigo-600 text-white border-indigo-600"
+                  ? "bg-mint-600 text-white border-mint-600"
                   : `${PALETTE[i % PALETTE.length]} border-transparent`
               }`}
             >
@@ -158,7 +158,7 @@ export function SearchPanel({
       <div>
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+            <div className="w-6 h-6 border-2 border-mint-500 border-t-transparent rounded-full animate-spin" />
           </div>
         ) : results.length === 0 ? (
           <div className="text-center py-12 text-slate-400">
