@@ -173,7 +173,7 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
   };
 
   const buttons: { mode: RunMode; label: string; desc: string; icon: typeof Play; color: string }[] = [
-    { mode: "incremental", label: "Sync Incremental", desc: "New tickets only", icon: Play, color: "bg-indigo-600 hover:bg-indigo-700 text-white" },
+    { mode: "incremental", label: "Sync Incremental", desc: "New tickets only", icon: Play, color: "bg-mint-600 hover:bg-mint-700 text-white" },
     { mode: "full", label: "Sync Full", desc: "All tickets", icon: RefreshCw, color: "bg-slate-700 hover:bg-slate-800 text-white" },
     { mode: "recluster", label: "Re-clustering", desc: "New taxonomy", icon: GitBranch, color: "bg-violet-600 hover:bg-violet-700 text-white" },
     { mode: "scrape-kb", label: "Scrape KB", desc: "Public articles", icon: Globe, color: "bg-cyan-600 hover:bg-cyan-700 text-white" },
@@ -183,10 +183,10 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
     <div className="space-y-5">
       {/* Running indicator */}
       {status === "running" && (
-        <div className="flex items-center gap-2 text-sm text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-2.5">
+        <div className="flex items-center gap-2 text-sm text-mint-600 bg-mint-50 border border-mint-100 rounded-xl px-4 py-2.5">
           <Radio size={14} className="animate-pulse" />
           <span className="font-medium">Pipeline running in background</span>
-          <span className="text-xs text-indigo-400 ml-auto">
+          <span className="text-xs text-mint-400 ml-auto">
             {connected ? "● Live" : "○ Reconnecting..."}
           </span>
         </div>
@@ -246,13 +246,13 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
         </div>
       )}
       {preview && (
-        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 space-y-3">
-          <div className="text-sm text-indigo-900">
+        <div className="bg-mint-50 border border-mint-200 rounded-xl p-4 space-y-3">
+          <div className="text-sm text-teal-900">
             <p className="font-semibold mb-1">
               {preview.total} ticket{preview.total !== 1 ? "s" : ""} found
               {preview.since ? ` (modified since ${preview.since})` : " (all)"}
             </p>
-            <div className="flex gap-4 text-xs text-indigo-700">
+            <div className="flex gap-4 text-xs text-mint-700">
               <span>{preview.new} new</span>
               <span>{preview.updated} already in DB</span>
               {preview.unprocessed_in_db > 0 && (
@@ -263,13 +263,13 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
           <div className="flex gap-2">
             <button
               onClick={confirmAndRun}
-              className="px-4 py-1.5 text-sm font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition-all"
+              className="px-4 py-1.5 text-sm font-semibold rounded-lg bg-mint-600 hover:bg-mint-700 text-white transition-all"
             >
               Confirm & Sync
             </button>
             <button
               onClick={() => setPreview(null)}
-              className="px-4 py-1.5 text-sm font-semibold rounded-lg bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-all"
+              className="px-4 py-1.5 text-sm font-semibold rounded-lg bg-white border border-mint-200 text-mint-700 hover:bg-mint-100 transition-all"
             >
               Cancel
             </button>
@@ -286,7 +286,7 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
           </div>
           <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
             <div
-              className="h-full bg-indigo-500 rounded-full transition-all duration-300"
+              className="h-full bg-mint-500 rounded-full transition-all duration-300"
               style={{ width: `${Math.round((progress.current / progress.total) * 100)}%` }}
             />
           </div>
@@ -313,7 +313,7 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
             </div>
           ))}
           {status === "running" && (
-            <div className="flex items-center gap-1.5 text-indigo-400">
+            <div className="flex items-center gap-1.5 text-mint-400">
               <Loader2 size={12} className="animate-spin" />
               <span>Processing...</span>
             </div>

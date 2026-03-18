@@ -51,7 +51,7 @@ const PALETTE = [
   "bg-emerald-100 text-emerald-700",
   "bg-orange-100 text-orange-700",
   "bg-pink-100 text-pink-700",
-  "bg-teal-100 text-teal-700",
+  "bg-mint-100 text-mint-700",
 ];
 let colorIdx = 0;
 
@@ -189,7 +189,7 @@ export function QACard({ qa, onUpdate }: Props) {
 
   if (editing) {
     return (
-      <div className="flex flex-col bg-white rounded-xl border-2 border-indigo-300 shadow-md overflow-hidden">
+      <div className="flex flex-col bg-white rounded-xl border-2 border-mint-300 shadow-md overflow-hidden">
         <div className="p-4 space-y-3">
           {/* Question */}
           <div>
@@ -198,7 +198,7 @@ export function QACard({ qa, onUpdate }: Props) {
               value={editQuestion}
               onChange={(e) => setEditQuestion(e.target.value)}
               rows={2}
-              className="mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+              className="mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-mint-500 resize-none"
             />
           </div>
 
@@ -209,7 +209,7 @@ export function QACard({ qa, onUpdate }: Props) {
               value={editAnswer}
               onChange={(e) => setEditAnswer(e.target.value)}
               rows={3}
-              className="mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+              className="mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-mint-500 resize-none"
               placeholder="No answer yet..."
             />
           </div>
@@ -230,7 +230,7 @@ export function QACard({ qa, onUpdate }: Props) {
                       next[i] = e.target.value;
                       setEditSteps(next);
                     }}
-                    className="flex-1 px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="flex-1 px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-mint-500"
                   />
                   <button
                     onClick={() => setEditSteps(editSteps.filter((_, j) => j !== i))}
@@ -242,7 +242,7 @@ export function QACard({ qa, onUpdate }: Props) {
               ))}
               <button
                 onClick={() => setEditSteps([...editSteps, ""])}
-                className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-1"
+                className="flex items-center gap-1.5 text-xs text-mint-600 hover:text-mint-800 font-medium mt-1"
               >
                 <Plus size={12} /> Add step
               </button>
@@ -255,7 +255,7 @@ export function QACard({ qa, onUpdate }: Props) {
             <input
               value={editSummary}
               onChange={(e) => setEditSummary(e.target.value)}
-              className="mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-mint-500"
               placeholder="Brief summary..."
             />
           </div>
@@ -266,30 +266,30 @@ export function QACard({ qa, onUpdate }: Props) {
               type="checkbox"
               checked={editResolved}
               onChange={(e) => setEditResolved(e.target.checked)}
-              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              className="w-4 h-4 rounded border-slate-300 text-mint-600 focus:ring-mint-500"
             />
             <span className="text-sm text-slate-700">Resolved</span>
           </label>
         </div>
 
         {/* AI Assistant */}
-        <div className="px-4 py-3 bg-indigo-50 border-t border-indigo-100">
+        <div className="px-4 py-3 bg-mint-50 border-t border-mint-100">
           <div className="flex gap-2">
             <div className="relative flex-1">
-              <Sparkles size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-400" />
+              <Sparkles size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-mint-400" />
               <input
                 value={aiInstruction}
                 onChange={(e) => setAiInstruction(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && runAiEdit()}
                 placeholder="Tell AI what to change..."
                 disabled={aiLoading}
-                className="w-full pl-9 pr-3 py-2 text-sm border border-indigo-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder-indigo-300 disabled:opacity-50"
+                className="w-full pl-9 pr-3 py-2 text-sm border border-mint-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-mint-500 placeholder-mint-300 disabled:opacity-50"
               />
             </div>
             <button
               onClick={runAiEdit}
               disabled={aiLoading || !aiInstruction.trim()}
-              className="px-3 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+              className="px-3 py-2 rounded-lg text-sm font-medium bg-mint-600 text-white hover:bg-mint-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
             >
               {aiLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
               Apply
@@ -308,7 +308,7 @@ export function QACard({ qa, onUpdate }: Props) {
           <button
             onClick={saveEdit}
             disabled={saving}
-            className="px-3 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+            className="px-3 py-1.5 rounded-lg text-sm font-medium bg-mint-600 text-white hover:bg-mint-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
           >
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
             Save
@@ -340,7 +340,7 @@ export function QACard({ qa, onUpdate }: Props) {
               {onUpdate && (
                 <button
                   onClick={startEdit}
-                  className="flex-shrink-0 p-1 rounded text-slate-300 opacity-0 group-hover:opacity-100 hover:text-indigo-600 hover:bg-indigo-50 transition-all"
+                  className="flex-shrink-0 p-1 rounded text-slate-300 opacity-0 group-hover:opacity-100 hover:text-mint-600 hover:bg-mint-50 transition-all"
                   title="Edit"
                 >
                   <Pencil size={14} />
@@ -425,7 +425,7 @@ export function QACard({ qa, onUpdate }: Props) {
           href={hubspotUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="w-full flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-100 text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 transition-colors"
+          className="w-full flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-100 text-xs font-medium text-mint-600 hover:text-mint-800 hover:bg-mint-50 transition-colors"
         >
           <span>View in HubSpot</span>
           <ExternalLink size={14} />

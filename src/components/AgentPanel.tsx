@@ -91,7 +91,7 @@ const PALETTE = [
   "bg-emerald-100 text-emerald-700",
   "bg-orange-100 text-orange-700",
   "bg-pink-100 text-pink-700",
-  "bg-teal-100 text-teal-700",
+  "bg-mint-100 text-mint-700",
 ];
 const categoryColors: Record<string, string> = {};
 let colorIdx = 0;
@@ -203,14 +203,14 @@ function RefSectionCard({ section }: { section: RefSectionRef }) {
     <div className="bg-white border border-slate-200 rounded-lg overflow-hidden text-xs">
       <div className="p-2.5">
         <div className="flex items-start gap-2">
-          <BookOpen size={12} className="text-indigo-500 flex-shrink-0 mt-0.5" />
+          <BookOpen size={12} className="text-mint-500 flex-shrink-0 mt-0.5" />
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline gap-1.5">
               <span className="font-medium text-slate-800">{section.heading}</span>
               <span className="text-slate-400 text-[10px]">{section.doc_title}</span>
             </div>
             {section.excerpt && (
-              <p className="mt-1.5 text-slate-600 leading-relaxed border-l-2 border-indigo-200 pl-2 italic">
+              <p className="mt-1.5 text-slate-600 leading-relaxed border-l-2 border-mint-200 pl-2 italic">
                 {section.excerpt}
               </p>
             )}
@@ -378,10 +378,10 @@ function CorrectionFlow({ msgIndex, message, corrections, onCorrectionsChange, u
           {data.preview.length === 0 && <p className="text-xs text-slate-400">No content changes needed.</p>}
           {data.preview.map((p) => <CorrectionPreviewCard key={p.qa_id} proposal={p} sourceQA={message.sources?.find((s) => s.id === p.qa_id)} />)}
           {data.behavioralSuggestion && (
-            <div className="border border-indigo-200 rounded-lg bg-indigo-50/50 p-3 text-xs space-y-2">
-              <div className="font-medium text-indigo-700 flex items-center gap-1.5"><Sparkles className="h-3 w-3" />Suggested behavioral rule</div>
+            <div className="border border-mint-200 rounded-lg bg-mint-50/50 p-3 text-xs space-y-2">
+              <div className="font-medium text-mint-700 flex items-center gap-1.5"><Sparkles className="h-3 w-3" />Suggested behavioral rule</div>
               <p className="text-slate-700"><span className="font-medium">{data.behavioralSuggestion.title}:</span> {data.behavioralSuggestion.instruction}</p>
-              <button onClick={handleCreateBehavioralCard} className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-indigo-700">Create Rule</button>
+              <button onClick={handleCreateBehavioralCard} className="flex items-center gap-1 rounded-lg bg-mint-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-mint-700">Create Rule</button>
             </div>
           )}
           <div className="flex gap-2 pt-1">
@@ -593,7 +593,7 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
         <div className="p-3 border-b border-slate-200">
           <button
             onClick={startNewChat}
-            className="w-full flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700 transition-colors"
+            className="w-full flex items-center justify-center gap-2 rounded-lg bg-mint-600 px-3 py-2 text-xs font-medium text-white hover:bg-mint-700 transition-colors"
           >
             <Plus size={14} />New Chat
           </button>
@@ -603,13 +603,13 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
         <div className="flex border-b border-slate-200">
           <button
             onClick={() => setSidebarFilter("mine")}
-            className={`flex-1 py-2 text-xs font-medium transition-colors ${sidebarFilter === "mine" ? "text-indigo-600 border-b-2 border-indigo-600" : "text-slate-400 hover:text-slate-600"}`}
+            className={`flex-1 py-2 text-xs font-medium transition-colors ${sidebarFilter === "mine" ? "text-mint-600 border-b-2 border-mint-600" : "text-slate-400 hover:text-slate-600"}`}
           >
             My Chats
           </button>
           <button
             onClick={() => setSidebarFilter("all")}
-            className={`flex-1 py-2 text-xs font-medium transition-colors flex items-center justify-center gap-1 ${sidebarFilter === "all" ? "text-indigo-600 border-b-2 border-indigo-600" : "text-slate-400 hover:text-slate-600"}`}
+            className={`flex-1 py-2 text-xs font-medium transition-colors flex items-center justify-center gap-1 ${sidebarFilter === "all" ? "text-mint-600 border-b-2 border-mint-600" : "text-slate-400 hover:text-slate-600"}`}
           >
             <Users size={11} />All
           </button>
@@ -624,7 +624,7 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
               <div
                 key={c.id}
                 onClick={() => loadConversation(c.id)}
-                className={`group px-3 py-2.5 border-b border-slate-100 cursor-pointer hover:bg-white transition-colors ${conversationId === c.id ? "bg-white border-l-2 border-l-indigo-500" : ""}`}
+                className={`group px-3 py-2.5 border-b border-slate-100 cursor-pointer hover:bg-white transition-colors ${conversationId === c.id ? "bg-white border-l-2 border-l-mint-500" : ""}`}
               >
                 <div className="flex items-start justify-between gap-1.5">
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -642,7 +642,7 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
                 </div>
                 <div className="flex items-center gap-2 mt-1">
                   {sidebarFilter === "all" && c.username !== user?.username && (
-                    <span className="text-[10px] text-indigo-500 font-medium">{c.username}</span>
+                    <span className="text-[10px] text-mint-500 font-medium">{c.username}</span>
                   )}
                   <span className="text-[10px] text-slate-400">{c.message_count} msgs</span>
                   <span className="text-[10px] text-slate-400">{new Date(c.updated_at * 1000).toLocaleDateString()}</span>
@@ -667,8 +667,8 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
         <div className="flex-1 overflow-y-auto space-y-6 px-4 pb-4">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center text-slate-400 gap-3">
-              <div className="w-14 h-14 rounded-2xl bg-indigo-50 flex items-center justify-center">
-                <Bot size={28} className="text-indigo-400" />
+              <div className="w-14 h-14 rounded-2xl bg-mint-50 flex items-center justify-center">
+                <Bot size={28} className="text-mint-400" />
               </div>
               <div>
                 <p className="text-sm font-medium text-slate-600">Ask anything about your customers</p>
@@ -682,7 +682,7 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
                   "Can you walk me through configuring webhooks for our ATS integration?",
                 ].map((q) => (
                   <button key={q} onClick={() => { setInput(q); inputRef.current?.focus(); }}
-                    className="text-left px-3 py-2.5 rounded-xl border border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50 text-xs text-slate-600 transition-all">
+                    className="text-left px-3 py-2.5 rounded-xl border border-slate-200 bg-white hover:border-mint-300 hover:bg-mint-50 text-xs text-slate-600 transition-all">
                     {q}
                   </button>
                 ))}
@@ -692,19 +692,19 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
             messages.map((msg, i) => (
               <div key={i} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                 {msg.role === "assistant" && (
-                  <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <Bot size={14} className="text-indigo-600" />
+                  <div className="w-7 h-7 rounded-lg bg-mint-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Bot size={14} className="text-mint-600" />
                   </div>
                 )}
 
                 <div className={`max-w-[80%] space-y-3 ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}>
                   <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
-                    msg.role === "user" ? "bg-indigo-600 text-white rounded-tr-sm" : "bg-white border border-slate-200 text-slate-800 rounded-tl-sm shadow-sm"
+                    msg.role === "user" ? "bg-mint-600 text-white rounded-tr-sm" : "bg-white border border-slate-200 text-slate-800 rounded-tl-sm shadow-sm"
                   }`}>
                     {msg.content || (msg.streaming && (
                       <span className="inline-flex gap-1 items-center text-slate-400"><Loader2 size={12} className="animate-spin" />Thinking...</span>
                     ))}
-                    {msg.streaming && msg.content && <span className="inline-block w-0.5 h-4 bg-indigo-400 animate-pulse ml-0.5 align-middle" />}
+                    {msg.streaming && msg.content && <span className="inline-block w-0.5 h-4 bg-mint-400 animate-pulse ml-0.5 align-middle" />}
                   </div>
 
                   {/* Star rating */}
@@ -795,7 +795,7 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
         </div>
 
         {/* Input */}
-        <form onSubmit={send} className="mx-4 mt-3 flex items-end rounded-xl border border-slate-200 bg-white shadow-sm focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-transparent transition">
+        <form onSubmit={send} className="mx-4 mt-3 flex items-end rounded-xl border border-slate-200 bg-white shadow-sm focus-within:ring-2 focus-within:ring-mint-500 focus-within:border-transparent transition">
           <textarea
             ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
             placeholder="Ask a question about your customers..." rows={1} disabled={loading}
@@ -804,7 +804,7 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
             onInput={(e) => { const t = e.currentTarget; t.style.height = "auto"; t.style.height = `${Math.min(t.scrollHeight, 120)}px`; }}
           />
           <button type="submit" disabled={loading || !input.trim()}
-            className="flex-shrink-0 m-1.5 w-8 h-8 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+            className="flex-shrink-0 m-1.5 w-8 h-8 rounded-lg bg-mint-600 hover:bg-mint-700 text-white flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed">
             {loading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
           </button>
         </form>

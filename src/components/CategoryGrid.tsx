@@ -6,8 +6,8 @@ const PALETTE = [
   { bg: "bg-emerald-100", text: "text-emerald-700", bar: "bg-emerald-500" },
   { bg: "bg-orange-100", text: "text-orange-700", bar: "bg-orange-500" },
   { bg: "bg-pink-100", text: "text-pink-700", bar: "bg-pink-500" },
-  { bg: "bg-teal-100", text: "text-teal-700", bar: "bg-teal-500" },
-  { bg: "bg-indigo-100", text: "text-indigo-700", bar: "bg-indigo-500" },
+  { bg: "bg-mint-100", text: "text-mint-700", bar: "bg-mint-500" },
+  { bg: "bg-mint-100", text: "text-mint-700", bar: "bg-mint-500" },
   { bg: "bg-rose-100", text: "text-rose-700", bar: "bg-rose-500" },
 ];
 
@@ -50,7 +50,7 @@ export function CategoryGrid({ categories, onSelect, selectedId }: Props) {
             onClick={() => onSelect?.(isSelected ? null : cat.id)}
             className={`w-full text-left p-3 rounded-xl border transition-all ${
               isSelected
-                ? "border-indigo-300 bg-indigo-50 shadow-sm"
+                ? "border-mint-300 bg-mint-50 shadow-sm"
                 : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"
             }`}
           >

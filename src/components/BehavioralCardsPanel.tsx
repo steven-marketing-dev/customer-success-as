@@ -153,7 +153,7 @@ export function BehavioralCardsPanel() {
             placeholder="Search rules..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-10 pr-10 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-10 pr-10 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-mint-500"
           />
           {query && (
             <button
@@ -166,7 +166,7 @@ export function BehavioralCardsPanel() {
         </div>
         <button
           onClick={() => setShowCreate(!showCreate)}
-          className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 transition-colors"
+          className="flex items-center gap-1.5 rounded-xl bg-mint-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-mint-700 transition-colors"
         >
           <Plus className="h-4 w-4" />
           Add Rule
@@ -183,7 +183,7 @@ export function BehavioralCardsPanel() {
               onClick={() => setScopeFilter(opt.value)}
               className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                 scopeFilter === opt.value
-                  ? "bg-indigo-100 text-indigo-700"
+                  ? "bg-mint-100 text-mint-700"
                   : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"
               }`}
             >
@@ -199,7 +199,7 @@ export function BehavioralCardsPanel() {
               onClick={() => setTypeFilter(opt.value)}
               className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                 typeFilter === opt.value
-                  ? "bg-indigo-100 text-indigo-700"
+                  ? "bg-mint-100 text-mint-700"
                   : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"
               }`}
             >
@@ -211,16 +211,16 @@ export function BehavioralCardsPanel() {
 
       {/* Create form */}
       {showCreate && (
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 space-y-3">
+        <div className="rounded-xl border border-mint-200 bg-mint-50/50 p-4 space-y-3">
           <input
-            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-mint-500"
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             placeholder="Rule title (e.g., Concise password reset answers)"
           />
           <div className="relative">
             <textarea
-              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 pr-24 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 pr-24 text-sm focus:outline-none focus:ring-2 focus:ring-mint-500"
               value={newInstruction}
               onChange={(e) => setNewInstruction(e.target.value)}
               rows={3}
@@ -242,7 +242,7 @@ export function BehavioralCardsPanel() {
               <select
                 value={newType}
                 onChange={(e) => setNewType(e.target.value as "knowledge" | "solution" | "general")}
-                className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-mint-500"
               >
                 <option value="general">General</option>
                 <option value="knowledge">Knowledge</option>
@@ -254,7 +254,7 @@ export function BehavioralCardsPanel() {
               <select
                 value={newScope}
                 onChange={(e) => setNewScope(e.target.value as "global" | "category")}
-                className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-mint-500"
               >
                 <option value="global">Global</option>
                 <option value="category">Category</option>
@@ -266,7 +266,7 @@ export function BehavioralCardsPanel() {
                 <select
                   value={newCategoryId ?? ""}
                   onChange={(e) => setNewCategoryId(e.target.value ? parseInt(e.target.value, 10) : null)}
-                  className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-mint-500"
                 >
                   <option value="">Select...</option>
                   {categories.map((c) => (
@@ -280,7 +280,7 @@ export function BehavioralCardsPanel() {
             <button
               onClick={handleCreate}
               disabled={creating || !newTitle.trim() || !newInstruction.trim()}
-              className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              className="flex items-center gap-1 rounded-lg bg-mint-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-mint-700 disabled:opacity-50"
             >
               {creating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
               Create

@@ -39,7 +39,7 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 const SCOPE_COLORS: Record<string, string> = {
-  global: "bg-indigo-100 text-indigo-700",
+  global: "bg-mint-100 text-mint-700",
   category: "bg-orange-100 text-orange-700",
 };
 
@@ -112,13 +112,13 @@ export function BehavioralCardItem({ card, categories, onUpdate, onDelete }: Pro
       {editing ? (
         <div className="space-y-3">
           <input
-            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-mint-500"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Rule title"
           />
           <textarea
-            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-mint-500"
             value={instruction}
             onChange={(e) => setInstruction(e.target.value)}
             rows={3}
@@ -128,7 +128,7 @@ export function BehavioralCardItem({ card, categories, onUpdate, onDelete }: Pro
             <select
               value={type}
               onChange={(e) => setType(e.target.value as "knowledge" | "solution" | "general")}
-              className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-mint-500"
             >
               <option value="general">General</option>
               <option value="knowledge">Knowledge</option>
@@ -137,7 +137,7 @@ export function BehavioralCardItem({ card, categories, onUpdate, onDelete }: Pro
             <select
               value={scope}
               onChange={(e) => setScope(e.target.value as "global" | "category")}
-              className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-mint-500"
             >
               <option value="global">Global</option>
               <option value="category">Category</option>
@@ -146,7 +146,7 @@ export function BehavioralCardItem({ card, categories, onUpdate, onDelete }: Pro
               <select
                 value={categoryId ?? ""}
                 onChange={(e) => setCategoryId(e.target.value ? parseInt(e.target.value, 10) : null)}
-                className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-mint-500"
               >
                 <option value="">Select category...</option>
                 {categories.map((c) => (
@@ -159,7 +159,7 @@ export function BehavioralCardItem({ card, categories, onUpdate, onDelete }: Pro
             <button
               onClick={handleSave}
               disabled={saving || !title.trim() || !instruction.trim()}
-              className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              className="flex items-center gap-1 rounded-lg bg-mint-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-mint-700 disabled:opacity-50"
             >
               {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
               Save

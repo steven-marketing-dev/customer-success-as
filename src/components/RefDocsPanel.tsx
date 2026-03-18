@@ -123,7 +123,7 @@ export function RefDocsPanel() {
             placeholder="Search documents..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-10 pr-10 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-10 pr-10 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-mint-500"
           />
           {query && (
             <button onClick={() => setQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600">
@@ -133,7 +133,7 @@ export function RefDocsPanel() {
         </div>
         <button
           onClick={() => setShowCreate(!showCreate)}
-          className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 transition-colors"
+          className="flex items-center gap-1.5 rounded-xl bg-mint-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-mint-700 transition-colors"
         >
           <Plus className="h-4 w-4" />
           Add Document
@@ -142,9 +142,9 @@ export function RefDocsPanel() {
 
       {/* Create form */}
       {showCreate && (
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 space-y-3">
+        <div className="rounded-xl border border-mint-200 bg-mint-50/50 p-4 space-y-3">
           <input
-            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-mint-500"
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             placeholder="Document title"
@@ -158,7 +158,7 @@ export function RefDocsPanel() {
                 value="google_doc"
                 checked={newSourceType === "google_doc"}
                 onChange={() => setNewSourceType("google_doc")}
-                className="accent-indigo-600"
+                className="accent-mint-600"
               />
               <span className="text-xs text-zinc-700">Google Doc</span>
             </label>
@@ -169,14 +169,14 @@ export function RefDocsPanel() {
                 value="manual"
                 checked={newSourceType === "manual"}
                 onChange={() => setNewSourceType("manual")}
-                className="accent-indigo-600"
+                className="accent-mint-600"
               />
               <span className="text-xs text-zinc-700">Manual</span>
             </label>
           </div>
           {newSourceType === "google_doc" && (
             <input
-              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-mint-500"
               value={newSourceUrl}
               onChange={(e) => setNewSourceUrl(e.target.value)}
               placeholder="Google Doc URL (must be shared with 'Anyone with the link')"
@@ -189,7 +189,7 @@ export function RefDocsPanel() {
             <button
               onClick={handleCreate}
               disabled={creating || !newTitle.trim() || (newSourceType === "google_doc" && !newSourceUrl.trim())}
-              className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              className="flex items-center gap-1 rounded-lg bg-mint-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-mint-700 disabled:opacity-50"
             >
               {creating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
               {newSourceType === "google_doc" ? "Import" : "Create"}
@@ -394,7 +394,7 @@ function RefDocCard({
           ) : (
             <button
               onClick={() => setShowAddSection(true)}
-              className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700 font-medium"
+              className="flex items-center gap-1 text-xs text-mint-600 hover:text-mint-700 font-medium"
             >
               <Plus className="h-3 w-3" /> Add Section
             </button>
@@ -447,15 +447,15 @@ function SectionItem({
 
   if (editing) {
     return (
-      <div className="rounded-lg border border-indigo-200 bg-white p-3 space-y-2">
+      <div className="rounded-lg border border-mint-200 bg-white p-3 space-y-2">
         <input
-          className="w-full rounded border border-zinc-300 px-2 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className="w-full rounded border border-zinc-300 px-2 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-mint-500"
           value={heading}
           onChange={(e) => setHeading(e.target.value)}
           placeholder="Section heading"
         />
         <textarea
-          className="w-full rounded border border-zinc-300 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className="w-full rounded border border-zinc-300 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-mint-500"
           value={content}
           onChange={(e) => setContent(e.target.value)}
           rows={6}
@@ -464,7 +464,7 @@ function SectionItem({
           <button
             onClick={handleSave}
             disabled={saving || !heading.trim() || !content.trim()}
-            className="flex items-center gap-1 rounded bg-indigo-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            className="flex items-center gap-1 rounded bg-mint-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-mint-700 disabled:opacity-50"
           >
             {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
             Save
@@ -539,15 +539,15 @@ function AddSectionForm({
   };
 
   return (
-    <div className="rounded-lg border border-indigo-200 bg-white p-3 space-y-2">
+    <div className="rounded-lg border border-mint-200 bg-white p-3 space-y-2">
       <input
-        className="w-full rounded border border-zinc-300 px-2 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        className="w-full rounded border border-zinc-300 px-2 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-mint-500"
         value={heading}
         onChange={(e) => setHeading(e.target.value)}
         placeholder="Section heading (e.g., 'Assertiveness Trait Definition')"
       />
       <textarea
-        className="w-full rounded border border-zinc-300 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        className="w-full rounded border border-zinc-300 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-mint-500"
         value={content}
         onChange={(e) => setContent(e.target.value)}
         rows={5}
@@ -557,7 +557,7 @@ function AddSectionForm({
         <button
           onClick={handleSubmit}
           disabled={saving || !heading.trim() || !content.trim()}
-          className="flex items-center gap-1 rounded bg-indigo-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+          className="flex items-center gap-1 rounded bg-mint-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-mint-700 disabled:opacity-50"
         >
           {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
           Add

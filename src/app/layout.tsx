@@ -3,13 +3,13 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Customer Success KB",
-  description: "Knowledge Base auto-alimentada desde HubSpot",
+  description: "AI-powered knowledge base for customer success teams",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="es">
-      <body className="min-h-screen bg-slate-50">
+    <html lang="en">
+      <body className="min-h-screen pattern-warm">
         {children}
       </body>
     </html>

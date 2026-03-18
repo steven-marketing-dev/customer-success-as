@@ -37,7 +37,7 @@ const tabs: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
 ];
 
 export default function Home() {
-  const [tab, setTab] = useState<Tab>("dashboard");
+  const [tab, setTab] = useState<Tab>("agent");
   const [data, setData] = useState<KBData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -137,17 +137,17 @@ export default function Home() {
   }, [fetchData]);
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen" style={{ background: "var(--bg, #FAF9F6)" }}>
       {/* Header */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
+      <header className="bg-white/80 backdrop-blur-md border-b border-warm-200 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="flex items-center justify-between h-14">
             {/* Logo */}
             <div className="flex items-center gap-2.5">
-              <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
-                <BookOpen size={14} className="text-white" />
+              <div className="w-9 h-9 mint-gradient rounded-2xl flex items-center justify-center" style={{ boxShadow: "0 2px 8px rgba(51, 178, 156, 0.2)" }}>
+                <BookOpen size={16} className="text-white" />
               </div>
-              <span className="font-semibold text-slate-900 text-sm">
+              <span className="font-display font-bold text-warm-800 text-sm tracking-tight">
                 CS Knowledge Base
               </span>
             </div>
@@ -160,10 +160,10 @@ export default function Home() {
                 <button
                   key={id}
                   onClick={() => setTab(id)}
-                  className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg mx-0.5 transition-all ${
+                  className={`flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold rounded-full mx-0.5 transition-all ${
                     tab === id
-                      ? "bg-indigo-50 text-indigo-700"
-                      : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+                      ? "bg-mint-50 text-mint-700"
+                      : "text-warm-500 hover:text-warm-700 hover:bg-warm-100"
                   }`}
                 >
                   <Icon size={15} />
@@ -193,7 +193,7 @@ export default function Home() {
                       {user.display_name || user.username}
                     </span>
                     {user.role === "master" && (
-                      <span className="px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-600 text-[10px] font-medium">admin</span>
+                      <span className="px-1.5 py-0.5 rounded-full bg-mint-100 text-mint-600 text-[10px] font-medium">admin</span>
                     )}
                     <ChevronDown size={13} className="text-slate-400" />
                   </button>
@@ -240,8 +240,8 @@ export default function Home() {
         {loading ? (
           <div className="flex items-center justify-center py-24">
             <div className="text-center space-y-3">
-              <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto" />
-              <p className="text-sm text-slate-400">Loading knowledge base...</p>
+              <div className="w-8 h-8 border-2 border-mint-400 border-t-transparent rounded-full animate-spin mx-auto" />
+              <p className="text-sm text-warm-400 font-display">Loading knowledge base...</p>
             </div>
           </div>
         ) : (
@@ -250,7 +250,7 @@ export default function Home() {
             {tab === "dashboard" && data && (
               <div className="space-y-8">
                 <div>
-                  <h1 className="text-xl font-bold text-slate-900 mb-1">Dashboard</h1>
+                  <h1 className="font-display text-xl font-bold text-[#0C1222] tracking-tight mb-1">Dashboard</h1>
                   <p className="text-sm text-slate-500">
                     Knowledge Base auto-populated from HubSpot
                   </p>
@@ -267,7 +267,7 @@ export default function Home() {
                       </h2>
                       <button
                         onClick={() => setTab("kb")}
-                        className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                        className="text-xs text-mint-600 hover:text-mint-800 font-medium"
                       >
                         View all →
                       </button>
@@ -286,7 +286,7 @@ export default function Home() {
                       </h2>
                       <button
                         onClick={() => setTab("kb")}
-                        className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                        className="text-xs text-mint-600 hover:text-mint-800 font-medium"
                       >
                         Search →
                       </button>
@@ -296,7 +296,7 @@ export default function Home() {
                         <p className="text-sm">No data yet.</p>
                         <button
                           onClick={() => setTab("pipeline")}
-                          className="mt-2 text-xs text-indigo-600 hover:underline"
+                          className="mt-2 text-xs text-mint-600 hover:underline"
                         >
                           Run the pipeline →
                         </button>
@@ -318,7 +318,7 @@ export default function Home() {
               <div className="space-y-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h1 className="text-xl font-bold text-slate-900 mb-1">Knowledge Base</h1>
+                    <h1 className="font-display text-xl font-bold text-[#0C1222] tracking-tight mb-1">Knowledge Base</h1>
                     <p className="text-sm text-slate-500">
                       {data.stats.qa_pairs} answers across {data.stats.categories} categories
                     </p>
@@ -331,7 +331,7 @@ export default function Home() {
                         onClick={() => setKbSubTab(st)}
                         className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                           kbSubTab === st
-                            ? "bg-indigo-50 text-indigo-700"
+                            ? "bg-mint-50 text-mint-700"
                             : "text-slate-500 hover:text-slate-700"
                         }`}
                       >
@@ -377,7 +377,7 @@ export default function Home() {
             {tab === "glossary" && (
               <div className="space-y-6">
                 <div>
-                  <h1 className="text-xl font-bold text-slate-900 mb-1">Glossary</h1>
+                  <h1 className="font-display text-xl font-bold text-[#0C1222] tracking-tight mb-1">Glossary</h1>
                   <p className="text-sm text-slate-500">
                     Product terms and definitions — auto-linked to related Q&A cards
                   </p>
@@ -391,7 +391,7 @@ export default function Home() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h1 className="text-xl font-bold text-slate-900 mb-1">AI Agent</h1>
+                    <h1 className="font-display text-xl font-bold text-[#0C1222] tracking-tight mb-1">AI Agent</h1>
                     <p className="text-sm text-slate-500">
                       {agentSubTab === "chat"
                         ? "Ask questions — answers are grounded in your knowledge base only"
@@ -405,7 +405,7 @@ export default function Home() {
                         onClick={() => setAgentSubTab(st)}
                         className={`px-4 py-1.5 text-xs font-medium transition-colors ${
                           agentSubTab === st
-                            ? "bg-indigo-600 text-white"
+                            ? "bg-mint-600 text-white"
                             : "bg-white text-slate-500 hover:bg-slate-50"
                         }`}
                       >
@@ -422,7 +422,7 @@ export default function Home() {
             {tab === "pipeline" && (
               <div className="space-y-6 max-w-3xl">
                 <div>
-                  <h1 className="text-xl font-bold text-slate-900 mb-1">Pipeline</h1>
+                  <h1 className="font-display text-xl font-bold text-[#0C1222] tracking-tight mb-1">Pipeline</h1>
                   <p className="text-sm text-slate-500">
                     Sync tickets from HubSpot and update the knowledge base
                   </p>
@@ -500,7 +500,7 @@ export default function Home() {
 
       {/* User Management Modal */}
       {showUserMgmt && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setShowUserMgmt(false)}>
+        <div className="fixed inset-0 glass-overlay flex items-center justify-center z-50" onClick={() => setShowUserMgmt(false)}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold text-slate-900">Manage Users</h2>
@@ -510,11 +510,11 @@ export default function Home() {
             <div className="space-y-2 border border-slate-200 rounded-lg p-3">
               <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-wide flex items-center gap-1.5"><UserPlus size={12} />Add User</h3>
               <div className="grid grid-cols-2 gap-2">
-                <input value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder="Username" className="col-span-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                <input value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Password" type="password" className="col-span-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                <input value={newDisplayName} onChange={(e) => setNewDisplayName(e.target.value)} placeholder="Display name (optional)" className="col-span-2 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                <input value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder="Username" className="col-span-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-mint-500" />
+                <input value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Password" type="password" className="col-span-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-mint-500" />
+                <input value={newDisplayName} onChange={(e) => setNewDisplayName(e.target.value)} placeholder="Display name (optional)" className="col-span-2 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-mint-500" />
               </div>
-              <button onClick={createUser} disabled={!newUsername || !newPassword} className="w-full rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50">Add User</button>
+              <button onClick={createUser} disabled={!newUsername || !newPassword} className="w-full rounded-lg bg-mint-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-mint-700 disabled:opacity-50">Add User</button>
             </div>
 
             <div className="space-y-1">
@@ -523,7 +523,7 @@ export default function Home() {
                   <div>
                     <span className="text-sm font-medium text-slate-700">{u.display_name || u.username}</span>
                     {u.display_name && <span className="text-xs text-slate-400 ml-1.5">@{u.username}</span>}
-                    {u.role === "master" && <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-600 text-[10px] font-medium">admin</span>}
+                    {u.role === "master" && <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-mint-100 text-mint-600 text-[10px] font-medium">admin</span>}
                   </div>
                   {u.id !== user?.id && (
                     <button onClick={() => deleteUser(u.id)} className="text-xs text-red-500 hover:text-red-700"><Trash2 size={13} /></button>
@@ -537,11 +537,11 @@ export default function Home() {
 
       {/* Ratings History Modal */}
       {showRatingsHistory && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setShowRatingsHistory(false)}>
+        <div className="fixed inset-0 glass-overlay flex items-center justify-center z-50" onClick={() => setShowRatingsHistory(false)}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-5 border-b border-slate-200">
               <div className="flex items-center gap-2.5">
-                <ClipboardList size={18} className="text-indigo-600" />
+                <ClipboardList size={18} className="text-mint-600" />
                 <h2 className="text-lg font-bold text-slate-900">Ratings History</h2>
                 <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-xs font-medium">{ratedMessages.length} rated</span>
               </div>
@@ -595,8 +595,8 @@ export default function Home() {
 
                       {/* Actions taken */}
                       {m.actions && (m.actions.corrections.length > 0 || m.actions.behavioralCards.length > 0) && (
-                        <div className="px-4 py-2.5 bg-indigo-50/30">
-                          <div className="text-[10px] font-semibold text-indigo-400 uppercase tracking-wide mb-2">Actions Taken</div>
+                        <div className="px-4 py-2.5 bg-mint-50/30">
+                          <div className="text-[10px] font-semibold text-mint-400 uppercase tracking-wide mb-2">Actions Taken</div>
 
                           {m.actions.corrections.length > 0 && (
                             <div className="mb-2">
@@ -623,10 +623,10 @@ export default function Home() {
                               <div className="text-[10px] text-slate-500 font-medium mb-1">Behavioral Rules Created ({m.actions.behavioralCards.length}):</div>
                               <div className="space-y-1.5">
                                 {m.actions.behavioralCards.map((bc) => (
-                                  <div key={bc.id} className="bg-white border border-indigo-200 rounded-lg px-2.5 py-1.5">
+                                  <div key={bc.id} className="bg-white border border-mint-200 rounded-lg px-2.5 py-1.5">
                                     <div className="flex items-center gap-1.5 mb-0.5">
-                                      <span className="text-xs font-medium text-indigo-700">{bc.title}</span>
-                                      <span className="px-1 py-0.5 rounded bg-indigo-100 text-indigo-600 text-[9px] font-medium">{bc.type}</span>
+                                      <span className="text-xs font-medium text-mint-700">{bc.title}</span>
+                                      <span className="px-1 py-0.5 rounded bg-mint-100 text-mint-600 text-[9px] font-medium">{bc.type}</span>
                                       <span className="px-1 py-0.5 rounded bg-slate-100 text-slate-500 text-[9px] font-medium">{bc.scope}</span>
                                     </div>
                                     <p className="text-[11px] text-slate-600">{bc.instruction.slice(0, 150)}{bc.instruction.length > 150 ? "..." : ""}</p>

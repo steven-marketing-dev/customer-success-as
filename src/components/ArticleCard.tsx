@@ -23,7 +23,7 @@ const PALETTE = [
   "bg-amber-100 text-amber-700",
   "bg-rose-100 text-rose-700",
   "bg-violet-100 text-violet-700",
-  "bg-teal-100 text-teal-700",
+  "bg-mint-100 text-mint-700",
 ];
 let colorIdx = 0;
 
