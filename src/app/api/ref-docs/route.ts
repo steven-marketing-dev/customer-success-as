@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Repository } from "@/lib/db/repository";
+import { rebuildFtsIndexes } from "@/lib/db/index";
 import { fetchGoogleDoc } from "@/lib/gdoc-importer";
 
 export async function GET() {
@@ -51,6 +52,9 @@ export async function POST(req: NextRequest) {
       });
     }
   }
+
+  // Rebuild FTS after importing sections
+  rebuildFtsIndexes();
 
   // Return doc with section count
   const docs = repo.getAllRefDocs();

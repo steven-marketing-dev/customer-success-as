@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Repository } from "@/lib/db/repository";
+import { rebuildFtsIndexes } from "@/lib/db/index";
 
 export async function GET(
   _req: NextRequest,
@@ -33,5 +34,6 @@ export async function PUT(
   if (body.resolved !== undefined) fields.resolved = body.resolved;
 
   const updated = repo.updateQAPair(qaId, fields);
+  rebuildFtsIndexes();
   return NextResponse.json(updated);
 }

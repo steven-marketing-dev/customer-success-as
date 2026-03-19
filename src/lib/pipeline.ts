@@ -5,7 +5,7 @@ import { mergeOrCreate } from "./ai/merger";
 import { getProvider } from "./ai/provider";
 import { extractTerms, extractTermsFromArticles } from "./ai/termExtractor";
 import { Repository } from "./db/repository";
-import { getDb } from "./db/index";
+import { getDb, rebuildFtsIndexes } from "./db/index";
 import { runScrape } from "./scraper";
 
 export type PipelineEvent =
@@ -106,6 +106,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
     }
 
     log(`✓ Term extraction complete: ${termsCreated} new terms`);
+    rebuildFtsIndexes();
     emit({ type: "done", stats });
     return stats;
   }
@@ -414,6 +415,10 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
     tickets_synced_total: (state.tickets_synced_total ?? 0) + newCount,
     qa_pairs_total: repo.countQAPairs(),
   });
+
+  // Rebuild FTS indexes after all mutations
+  rebuildFtsIndexes();
+  log("FTS indexes rebuilt");
 
   stats.categories_total = repo.getAllCategories().length;
   emit({ type: "done", stats });
