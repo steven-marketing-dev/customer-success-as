@@ -371,90 +371,49 @@ function initDb(db: Database.Database) {
   }
 
   // --- FTS5 full-text search indexes ---
-  // Non-external tables (store own copy) for reliable MATCH queries
-  // porter unicode61 tokenizer gives proper English stemming + unicode support
+  // External-content FTS5: reads directly from source tables via content= option.
+  // No triggers needed — call rebuildFtsIndexes() after batch inserts/updates/deletes.
+  // Drop old standalone FTS tables and triggers if they exist (migration from trigger-based)
+  try {
+    for (const name of ["qa_pairs_fts_ai", "qa_pairs_fts_ad", "qa_pairs_fts_au",
+      "kb_articles_fts_ai", "kb_articles_fts_ad", "kb_articles_fts_au",
+      "ref_doc_sections_fts_ai", "ref_doc_sections_fts_ad", "ref_doc_sections_fts_au"]) {
+      db.exec(`DROP TRIGGER IF EXISTS ${name}`);
+    }
+    // Check if existing FTS table is standalone (no content=) — if so, recreate
+    const existingFts = db.prepare("SELECT sql FROM sqlite_master WHERE name='qa_pairs_fts'").get() as { sql: string } | undefined;
+    if (existingFts && !existingFts.sql.includes("content=")) {
+      db.exec("DROP TABLE IF EXISTS qa_pairs_fts");
+      db.exec("DROP TABLE IF EXISTS kb_articles_fts");
+      db.exec("DROP TABLE IF EXISTS ref_doc_sections_fts");
+    }
+  } catch { /* migration cleanup */ }
+
   try {
     db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS qa_pairs_fts USING fts5(
         question, answer, summary, question_template,
+        content='qa_pairs', content_rowid='id',
         tokenize='porter unicode61'
       );
       CREATE VIRTUAL TABLE IF NOT EXISTS kb_articles_fts USING fts5(
         title, content,
+        content='kb_articles', content_rowid='id',
         tokenize='porter unicode61'
       );
       CREATE VIRTUAL TABLE IF NOT EXISTS ref_doc_sections_fts USING fts5(
         heading, content,
+        content='ref_doc_sections', content_rowid='id',
         tokenize='porter unicode61'
       );
     `);
   } catch { /* FTS tables already exist */ }
 
-  // Sync triggers: keep FTS indexes in sync with source tables
-  const triggerSql = `
-    -- qa_pairs triggers
-    CREATE TRIGGER IF NOT EXISTS qa_pairs_fts_ai AFTER INSERT ON qa_pairs BEGIN
-      INSERT INTO qa_pairs_fts(rowid, question, answer, summary, question_template)
-      VALUES (new.id, new.question, new.answer, new.summary, new.question_template);
-    END;
-    CREATE TRIGGER IF NOT EXISTS qa_pairs_fts_ad AFTER DELETE ON qa_pairs BEGIN
-      INSERT INTO qa_pairs_fts(qa_pairs_fts, rowid, question, answer, summary, question_template)
-      VALUES ('delete', old.id, old.question, old.answer, old.summary, old.question_template);
-    END;
-    CREATE TRIGGER IF NOT EXISTS qa_pairs_fts_au AFTER UPDATE ON qa_pairs BEGIN
-      INSERT INTO qa_pairs_fts(qa_pairs_fts, rowid, question, answer, summary, question_template)
-      VALUES ('delete', old.id, old.question, old.answer, old.summary, old.question_template);
-      INSERT INTO qa_pairs_fts(rowid, question, answer, summary, question_template)
-      VALUES (new.id, new.question, new.answer, new.summary, new.question_template);
-    END;
-
-    -- kb_articles triggers
-    CREATE TRIGGER IF NOT EXISTS kb_articles_fts_ai AFTER INSERT ON kb_articles BEGIN
-      INSERT INTO kb_articles_fts(rowid, title, content)
-      VALUES (new.id, new.title, new.content);
-    END;
-    CREATE TRIGGER IF NOT EXISTS kb_articles_fts_ad AFTER DELETE ON kb_articles BEGIN
-      INSERT INTO kb_articles_fts(kb_articles_fts, rowid, title, content)
-      VALUES ('delete', old.id, old.title, old.content);
-    END;
-    CREATE TRIGGER IF NOT EXISTS kb_articles_fts_au AFTER UPDATE ON kb_articles BEGIN
-      INSERT INTO kb_articles_fts(kb_articles_fts, rowid, title, content)
-      VALUES ('delete', old.id, old.title, old.content);
-      INSERT INTO kb_articles_fts(rowid, title, content)
-      VALUES (new.id, new.title, new.content);
-    END;
-
-    -- ref_doc_sections triggers
-    CREATE TRIGGER IF NOT EXISTS ref_doc_sections_fts_ai AFTER INSERT ON ref_doc_sections BEGIN
-      INSERT INTO ref_doc_sections_fts(rowid, heading, content)
-      VALUES (new.id, new.heading, new.content);
-    END;
-    CREATE TRIGGER IF NOT EXISTS ref_doc_sections_fts_ad AFTER DELETE ON ref_doc_sections BEGIN
-      INSERT INTO ref_doc_sections_fts(ref_doc_sections_fts, rowid, heading, content)
-      VALUES ('delete', old.id, old.heading, old.content);
-    END;
-    CREATE TRIGGER IF NOT EXISTS ref_doc_sections_fts_au AFTER UPDATE ON ref_doc_sections BEGIN
-      INSERT INTO ref_doc_sections_fts(ref_doc_sections_fts, rowid, heading, content)
-      VALUES ('delete', old.id, old.heading, old.content);
-      INSERT INTO ref_doc_sections_fts(rowid, heading, content)
-      VALUES (new.id, new.heading, new.content);
-    END;
-  `;
-  try { db.exec(triggerSql); } catch { /* triggers already exist */ }
-
-  // Populate FTS indexes from existing data (idempotent — only if empty)
+  // Build FTS indexes from source tables
   try {
-    const count = (db.prepare("SELECT COUNT(*) as n FROM qa_pairs_fts").get() as { n: number }).n;
-    if (count === 0) {
-      db.exec(`
-        INSERT INTO qa_pairs_fts(rowid, question, answer, summary, question_template)
-          SELECT id, question, COALESCE(answer, ''), summary, question_template FROM qa_pairs;
-        INSERT INTO kb_articles_fts(rowid, title, content)
-          SELECT id, title, content FROM kb_articles;
-        INSERT INTO ref_doc_sections_fts(rowid, heading, content)
-          SELECT id, heading, content FROM ref_doc_sections;
-      `);
-    }
+    db.exec("INSERT INTO qa_pairs_fts(qa_pairs_fts) VALUES('rebuild')");
+    db.exec("INSERT INTO kb_articles_fts(kb_articles_fts) VALUES('rebuild')");
+    db.exec("INSERT INTO ref_doc_sections_fts(ref_doc_sections_fts) VALUES('rebuild')");
   } catch { /* source tables may be empty */ }
 
   // Seed master account if no users exist
@@ -487,4 +446,14 @@ export function getDb(): Database.Database {
 
   global.__db = db;
   return db;
+}
+
+/** Rebuild all FTS5 indexes from source tables. Call after batch mutations. */
+export function rebuildFtsIndexes(db?: ReturnType<typeof getDb>): void {
+  const d = db ?? getDb();
+  try {
+    d.exec("INSERT INTO qa_pairs_fts(qa_pairs_fts) VALUES('rebuild')");
+    d.exec("INSERT INTO kb_articles_fts(kb_articles_fts) VALUES('rebuild')");
+    d.exec("INSERT INTO ref_doc_sections_fts(ref_doc_sections_fts) VALUES('rebuild')");
+  } catch { /* tables may not exist yet */ }
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Repository } from "@/lib/db/repository";
+import { rebuildFtsIndexes } from "@/lib/db/index";
 import { fetchGoogleDoc } from "@/lib/gdoc-importer";
 
 export async function POST(
@@ -27,6 +28,7 @@ export async function POST(
     content: body.content.trim(),
     section_order: order,
   });
+  rebuildFtsIndexes();
   return NextResponse.json(section);
 }
 
@@ -62,6 +64,7 @@ export async function PUT(
       repo.updateRefDoc(docId, { title: result.title });
     }
 
+    rebuildFtsIndexes();
     const sections = repo.getRefDocSections(docId);
     return NextResponse.json({ reimported: sections.length, sections });
   } catch (err) {
