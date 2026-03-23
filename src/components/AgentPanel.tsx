@@ -4,6 +4,87 @@ import { useState, useRef, useEffect, FormEvent, useCallback } from "react";
 import { Send, Bot, User, Loader2, BookOpen, AlertCircle, Globe, Tag, Flag, Check, Sparkles, Plus, MessageSquare, Trash2, Star, ChevronLeft, ChevronRight, Users } from "lucide-react";
 import { type QAItem } from "./QACard";
 
+/** Lightweight markdown→HTML. No headings (h1-h6), just inline formatting + lists + code blocks. */
+function renderMarkdown(text: string): string {
+  // Escape HTML
+  let html = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  // Code blocks (```...```)
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) =>
+    `<pre class="agent-code-block"><code>${code.trimEnd()}</code></pre>`
+  );
+
+  // Inline code (`...`)
+  html = html.replace(/`([^`]+)`/g, '<code class="agent-inline-code">$1</code>');
+
+  // Bold + italic (***text*** or ___text___)
+  html = html.replace(/\*{3}(.+?)\*{3}/g, "<strong><em>$1</em></strong>");
+  html = html.replace(/_{3}(.+?)_{3}/g, "<strong><em>$1</em></strong>");
+
+  // Bold (**text** or __text__)
+  html = html.replace(/\*{2}(.+?)\*{2}/g, "<strong>$1</strong>");
+  html = html.replace(/_{2}(.+?)_{2}/g, "<strong>$1</strong>");
+
+  // Italic (*text* or _text_)
+  html = html.replace(/(?<!\w)\*([^*]+)\*(?!\w)/g, "<em>$1</em>");
+  html = html.replace(/(?<!\w)_([^_]+)_(?!\w)/g, "<em>$1</em>");
+
+  // Strip heading markers (# ... ) — render as bold paragraph instead
+  html = html.replace(/^#{1,6}\s+(.+)$/gm, "<strong>$1</strong>");
+
+  // Process lines for lists
+  const lines = html.split("\n");
+  const result: string[] = [];
+  let inUl = false;
+  let inOl = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Numbered list (1. item)
+    const olMatch = line.match(/^\s*(\d+)\.\s+(.+)/);
+    if (olMatch) {
+      if (!inOl) { result.push('<ol class="agent-ol">'); inOl = true; }
+      if (inUl) { result.push("</ul>"); inUl = false; }
+      result.push(`<li>${olMatch[2]}</li>`);
+      continue;
+    }
+
+    // Bullet list (- item or * item)
+    const ulMatch = line.match(/^\s*[-*]\s+(.+)/);
+    if (ulMatch) {
+      if (!inUl) { result.push('<ul class="agent-ul">'); inUl = true; }
+      if (inOl) { result.push("</ol>"); inOl = false; }
+      result.push(`<li>${ulMatch[1]}</li>`);
+      continue;
+    }
+
+    // Close open lists
+    if (inUl) { result.push("</ul>"); inUl = false; }
+    if (inOl) { result.push("</ol>"); inOl = false; }
+
+    // Horizontal rule
+    if (/^\s*[-*_]{3,}\s*$/.test(line)) {
+      result.push('<hr class="agent-hr" />');
+      continue;
+    }
+
+    // Empty line → paragraph break
+    if (line.trim() === "") {
+      result.push('<div class="h-2"></div>');
+    } else {
+      result.push(`<p class="agent-p">${line}</p>`);
+    }
+  }
+  if (inUl) result.push("</ul>");
+  if (inOl) result.push("</ol>");
+
+  return result.join("");
+}
+
 interface ArticleRef {
   id: number;
   title: string;
@@ -698,12 +779,16 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
                 )}
 
                 <div className={`max-w-[80%] space-y-3 ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}>
-                  <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
-                    msg.role === "user" ? "bg-mint-600 text-white rounded-tr-sm" : "bg-white border border-slate-200 text-slate-800 rounded-tl-sm shadow-sm"
+                  <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed ${
+                    msg.role === "user" ? "bg-mint-600 text-white rounded-tr-sm whitespace-pre-wrap" : "bg-white border border-slate-200 text-slate-800 rounded-tl-sm shadow-sm agent-markdown"
                   }`}>
-                    {msg.content || (msg.streaming && (
-                      <span className="inline-flex gap-1 items-center text-slate-400"><Loader2 size={12} className="animate-spin" />Thinking...</span>
-                    ))}
+                    {msg.role === "assistant" && msg.content ? (
+                      <div dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
+                    ) : (
+                      msg.content || (msg.streaming && (
+                        <span className="inline-flex gap-1 items-center text-slate-400"><Loader2 size={12} className="animate-spin" />Thinking...</span>
+                      ))
+                    )}
                     {msg.streaming && msg.content && <span className="inline-block w-0.5 h-4 bg-mint-400 animate-pulse ml-0.5 align-middle" />}
                   </div>
 
