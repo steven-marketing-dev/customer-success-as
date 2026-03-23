@@ -831,6 +831,19 @@ export class Repository {
       .all() as Array<BehavioralCard & { category_name?: string }>;
   }
 
+  getBehavioralCardsForQAs(qaIds: number[]): Array<BehavioralCard & { category_name?: string }> {
+    if (qaIds.length === 0) return [];
+    const placeholders = qaIds.map(() => "?").join(",");
+    return this.db.prepare(
+      `SELECT DISTINCT b.*, c.name as category_name
+       FROM behavioral_cards b
+       LEFT JOIN categories c ON b.category_id = c.id
+       INNER JOIN correction_logs cl ON b.correction_log_id = cl.id
+       WHERE cl.qa_id IN (${placeholders})
+       ORDER BY b.created_at DESC`
+    ).all(...qaIds) as Array<BehavioralCard & { category_name?: string }>;
+  }
+
   getGlobalBehavioralCards(): BehavioralCard[] {
     return this.db
       .prepare("SELECT * FROM behavioral_cards WHERE scope = 'global' AND active = 1 ORDER BY created_at ASC")

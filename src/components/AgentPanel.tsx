@@ -20,6 +20,9 @@ function renderMarkdown(text: string): string {
   // Inline code (`...`)
   html = html.replace(/`([^`]+)`/g, '<code class="agent-inline-code">$1</code>');
 
+  // Links [text](url)
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="agent-link">$1</a>');
+
   // Bold + italic (***text*** or ___text___)
   html = html.replace(/\*{3}(.+?)\*{3}/g, "<strong><em>$1</em></strong>");
   html = html.replace(/_{3}(.+?)_{3}/g, "<strong><em>$1</em></strong>");
@@ -112,6 +115,8 @@ interface CorrectionProposal {
 }
 
 interface BehavioralSuggestion {
+  action: "create" | "update";
+  update_id?: number;
   scope: "global" | "category";
   category_name?: string;
   type: "knowledge" | "solution" | "general";
@@ -141,12 +146,22 @@ interface Message {
   rating?: number | null;
 }
 
+interface PriorCorrection {
+  id: number;
+  field_name: string;
+  old_value: string | null;
+  new_value: string | null;
+  user_feedback: string;
+  created_at: number;
+}
+
 interface CorrectionData {
   state: CorrectionState;
   feedback: string;
   preview: CorrectionProposal[];
   behavioralSuggestion: BehavioralSuggestion | null;
   appliedCount: number;
+  priorCorrections: Record<number, PriorCorrection[]>; // keyed by qa_id
 }
 
 interface ConversationItem {
@@ -387,54 +402,84 @@ function CorrectionFlow({ msgIndex, message, corrections, onCorrectionsChange, u
   msgIndex: number; message: Message; corrections: Record<number, CorrectionData>;
   onCorrectionsChange: (idx: number, data: CorrectionData) => void; userQuestion: string;
 }) {
-  const data = corrections[msgIndex] ?? { state: "idle" as CorrectionState, feedback: "", preview: [], behavioralSuggestion: null, appliedCount: 0 };
+  const data = corrections[msgIndex] ?? { state: "idle" as CorrectionState, feedback: "", preview: [], behavioralSuggestion: null, appliedCount: 0, priorCorrections: {} };
   const setState = (partial: Partial<CorrectionData>) => onCorrectionsChange(msgIndex, { ...data, ...partial });
 
   const handleGeneratePreview = async () => {
     if (!data.feedback.trim()) return;
     setState({ state: "loading" });
     try {
+      const sourceIds = (message.sources ?? []).map((s) => s.id);
       const res = await fetch("/api/agent/correct", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agentQuestion: userQuestion, agentAnswer: message.content, feedback: data.feedback, sourceIds: (message.sources ?? []).map((s) => s.id) }),
+        body: JSON.stringify({ agentQuestion: userQuestion, agentAnswer: message.content, feedback: data.feedback, sourceIds }),
       });
       if (!res.ok) throw new Error("Failed");
       const result = await res.json();
-      setState({ state: "preview", preview: result.corrections ?? [], behavioralSuggestion: result.behavioral_suggestion ?? null });
+      setState({
+        state: "preview",
+        preview: result.corrections ?? [],
+        behavioralSuggestion: result.behavioral_suggestion ?? null,
+        priorCorrections: result.priorCorrections ?? {},
+      });
     } catch { setState({ state: "writing" }); }
   };
 
-  const handleApply = async () => {
+  const handleApply = async (includeBehavioral = false) => {
     setState({ state: "loading" });
     try {
       const res = await fetch("/api/agent/correct/apply", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agentQuestion: userQuestion, agentAnswer: message.content, feedback: data.feedback, corrections: data.preview }),
+        body: JSON.stringify({
+          agentQuestion: userQuestion,
+          agentAnswer: message.content,
+          feedback: data.feedback,
+          corrections: data.preview,
+          behavioralSuggestion: includeBehavioral ? data.behavioralSuggestion : null,
+        }),
       });
       if (!res.ok) throw new Error("Failed");
       const result = await res.json();
-      setState({ state: "applied", appliedCount: result.updated?.length ?? 0 });
+      setState({
+        state: "applied",
+        appliedCount: result.updated?.length ?? 0,
+        behavioralSuggestion: includeBehavioral ? null : data.behavioralSuggestion,
+      });
     } catch { setState({ state: "preview" }); }
   };
 
   const handleCreateBehavioralCard = async () => {
     if (!data.behavioralSuggestion) return;
     const s = data.behavioralSuggestion;
-    await fetch("/api/behavioral-cards", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: s.title, instruction: s.instruction, type: s.type, scope: s.scope, source: "suggested" }),
-    });
+    if (s.action === "update" && s.update_id) {
+      await fetch(`/api/behavioral-cards/${s.update_id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: s.title, instruction: s.instruction, type: s.type, scope: s.scope }),
+      });
+    } else {
+      await fetch("/api/behavioral-cards", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: s.title, instruction: s.instruction, type: s.type, scope: s.scope, source: "correction" }),
+      });
+    }
     setState({ behavioralSuggestion: null });
   };
 
-  if (!message.sources || message.sources.length === 0) return null;
+  const wasCorrected = data.state === "applied" || data.appliedCount > 0;
 
   return (
     <div className="w-full">
       {data.state === "idle" && (
-        <button onClick={() => setState({ state: "writing" })} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-amber-600 transition-colors mt-1">
-          <Flag size={11} /><span>Correct this response</span>
-        </button>
+        <div className="flex items-center gap-3 mt-1">
+          <button onClick={() => setState({ state: "writing" })} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-amber-600 transition-colors">
+            <Flag size={11} /><span>{wasCorrected ? "Re-correct this response" : "Correct this response"}</span>
+          </button>
+          {wasCorrected && (
+            <span className="inline-flex items-center gap-1 text-[10px] text-emerald-500 bg-emerald-50 rounded-full px-2 py-0.5">
+              <Check size={9} />Previously corrected
+            </span>
+          )}
+        </div>
       )}
       {data.state === "writing" && (
         <div className="mt-2 space-y-2 border border-amber-200 rounded-lg bg-amber-50/30 p-3">
@@ -457,24 +502,68 @@ function CorrectionFlow({ msgIndex, message, corrections, onCorrectionsChange, u
         <div className="mt-2 space-y-3 border border-amber-200 rounded-lg bg-amber-50/30 p-3">
           <div className="text-xs font-medium text-slate-600">Proposed corrections ({data.preview.length} card{data.preview.length !== 1 ? "s" : ""}):</div>
           {data.preview.length === 0 && <p className="text-xs text-slate-400">No content changes needed.</p>}
-          {data.preview.map((p) => <CorrectionPreviewCard key={p.qa_id} proposal={p} sourceQA={message.sources?.find((s) => s.id === p.qa_id)} />)}
+          {data.preview.map((p) => {
+            const priors = data.priorCorrections[p.qa_id] ?? [];
+            return (
+              <div key={p.qa_id}>
+                {priors.length > 0 && (
+                  <div className="mb-2 rounded-lg border border-blue-200 bg-blue-50/50 p-2.5 text-[11px]">
+                    <div className="font-medium text-blue-600 mb-1">Prior corrections on this card:</div>
+                    {priors.map((pc) => (
+                      <div key={pc.id} className="flex gap-1 text-blue-500 mb-0.5">
+                        <span className="font-medium">{pc.field_name}:</span>
+                        <span className="line-through text-blue-300">{pc.old_value?.substring(0, 60) ?? "(empty)"}</span>
+                        <span>→</span>
+                        <span>{pc.new_value?.substring(0, 60) ?? "(empty)"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <CorrectionPreviewCard proposal={p} sourceQA={message.sources?.find((s) => s.id === p.qa_id)} />
+              </div>
+            );
+          })}
           {data.behavioralSuggestion && (
             <div className="border border-mint-200 rounded-lg bg-mint-50/50 p-3 text-xs space-y-2">
-              <div className="font-medium text-mint-700 flex items-center gap-1.5"><Sparkles className="h-3 w-3" />Suggested behavioral rule</div>
+              <div className="font-medium text-mint-700 flex items-center gap-1.5">
+                <Sparkles className="h-3 w-3" />
+                {data.behavioralSuggestion.action === "update" ? "Update existing rule" : "Suggested behavioral rule"}
+                {data.behavioralSuggestion.action === "update" && (
+                  <span className="text-[10px] bg-amber-100 text-amber-700 rounded-full px-1.5 py-0.5">update</span>
+                )}
+              </div>
               <p className="text-slate-700"><span className="font-medium">{data.behavioralSuggestion.title}:</span> {data.behavioralSuggestion.instruction}</p>
-              <button onClick={handleCreateBehavioralCard} className="flex items-center gap-1 rounded-lg bg-mint-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-mint-700">Create Rule</button>
+              <button onClick={handleCreateBehavioralCard} className="flex items-center gap-1 rounded-lg bg-mint-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-mint-700">
+                {data.behavioralSuggestion.action === "update" ? "Update Rule" : "Create Rule"}
+              </button>
             </div>
           )}
           <div className="flex gap-2 pt-1">
             {data.preview.length > 0 && (
-              <button onClick={handleApply} className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"><Check className="h-3 w-3" />Apply</button>
+              <>
+                <button onClick={() => handleApply(false)} className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"><Check className="h-3 w-3" />Apply</button>
+                {data.behavioralSuggestion && (
+                  <button onClick={() => handleApply(true)} className="flex items-center gap-1 rounded-lg bg-mint-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-mint-700">
+                    <Sparkles className="h-3 w-3" />{data.behavioralSuggestion?.action === "update" ? "Apply + Update Rule" : "Apply + Create Rule"}
+                  </button>
+                )}
+              </>
             )}
-            <button onClick={() => setState({ state: "idle", feedback: "", preview: [], behavioralSuggestion: null })} className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100">Discard</button>
+            <button onClick={() => setState({ state: "idle", feedback: "", preview: [], behavioralSuggestion: null, priorCorrections: {} })} className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100">Discard</button>
           </div>
         </div>
       )}
       {data.state === "applied" && (
-        <div className="mt-2 flex items-center gap-1.5 text-xs text-emerald-600"><Check size={12} /><span>{data.appliedCount} QA card{data.appliedCount !== 1 ? "s" : ""} updated</span></div>
+        <div className="mt-2 space-y-2">
+          <div className="flex items-center gap-1.5 text-xs text-emerald-600"><Check size={12} /><span>{data.appliedCount} QA card{data.appliedCount !== 1 ? "s" : ""} updated</span></div>
+          {data.behavioralSuggestion && (
+            <div className="border border-mint-200 rounded-lg bg-mint-50/50 p-3 text-xs space-y-2">
+              <div className="font-medium text-mint-700 flex items-center gap-1.5"><Sparkles className="h-3 w-3" />Suggested behavioral rule (not yet created)</div>
+              <p className="text-slate-700"><span className="font-medium">{data.behavioralSuggestion.title}:</span> {data.behavioralSuggestion.instruction}</p>
+              <button onClick={handleCreateBehavioralCard} className="flex items-center gap-1 rounded-lg bg-mint-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-mint-700">Create Rule</button>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

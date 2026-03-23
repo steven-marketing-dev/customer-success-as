@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
         const truncated = a.content.length > 2000
           ? a.content.slice(0, 2000) + "..."
           : a.content;
-        return `[Article:${a.id}] ${a.title}${a.category ? ` (${a.category})` : ""}\n${truncated}`;
+        return `[Article:${a.id}] ${a.title} ${a.url}${a.category ? ` (${a.category})` : ""}\n${truncated}`;
       }).join("\n\n")
     : "";
 
@@ -158,7 +158,11 @@ Rules:
 - If the question truly cannot be answered from the provided entries, say so clearly — do not guess or invent information
 - If the answer is partial, say what you know and note the limitation
 - Do not reference external information
-- CITATION RULES: At the very end of your response, output these three lines exactly. You MUST cite every source you drew information from — do not leave a citation list empty if you used that source type:
+- ARTICLE LINKS: When mentioning features or providing recommendations, reference the relevant knowledge base article by name in your answer. At the END of your response (before the SOURCES/REFS/ARTICLES lines), add a section:
+  "For more information, here are some helpful articles:"
+  Then list each relevant article as: - [Article Title](URL)
+  Use ONLY articles provided in the DOCUMENTATION section below. The article URLs are embedded in each article's header line as [Article:ID] Title URL. Include this section whenever you used any articles.
+- CITATION RULES: At the very end of your response (AFTER the helpful articles section if present), output these three lines exactly. You MUST cite every source you drew information from — do not leave a citation list empty if you used that source type:
   SOURCES:[id1,id2,...] (IDs of Q&A entries [ID:N] you used, or SOURCES:[] if none)
   REFS:[id1,id2,...] (IDs of reference document sections [REF:N] you used, or REFS:[] if none)
   ARTICLES:[id1,id2,...] (IDs of articles [Article:N] you used, or ARTICLES:[] if none)

@@ -13,11 +13,21 @@ export interface CorrectionProposal {
 }
 
 export interface BehavioralSuggestion {
+  action: "create" | "update";
+  update_id?: number; // existing behavioral card ID to update
   scope: "global" | "category";
   category_name?: string;
   type: "knowledge" | "solution" | "general";
   title: string;
   instruction: string;
+}
+
+export interface ExistingRule {
+  id: number;
+  title: string;
+  instruction: string;
+  type: string;
+  scope: string;
 }
 
 interface SourceQA {
@@ -32,6 +42,14 @@ interface SourceQA {
 
 const SYSTEM = `You are a knowledge base correction assistant. You analyze user feedback about an AI agent's response and determine what changes are needed to the source Q&A cards that produced the response. Respond ONLY with valid JSON.`;
 
+interface PriorCorrectionInfo {
+  qa_id: number;
+  field_name: string;
+  old_value: string | null;
+  new_value: string | null;
+  feedback: string;
+}
+
 /**
  * Given a user's feedback about an agent response, generate proposed corrections
  * to the source QA cards and optionally suggest a behavioral card.
@@ -41,6 +59,8 @@ export async function generateCorrectionPreview(
   agentAnswer: string,
   userFeedback: string,
   sourceQAs: SourceQA[],
+  priorCorrections: PriorCorrectionInfo[] = [],
+  existingRules: ExistingRule[] = [],
 ): Promise<{
   corrections: CorrectionProposal[];
   behavioral_suggestion: BehavioralSuggestion | null;
@@ -57,6 +77,24 @@ Resolved: ${qa.resolved ? "Yes" : "No"}`,
     )
     .join("\n\n---\n\n");
 
+  const priorSection = priorCorrections.length > 0
+    ? `\n\nPRIOR CORRECTIONS (these changes were already applied to these cards):
+${priorCorrections.map((pc) =>
+  `- Card ID:${pc.qa_id}, field "${pc.field_name}": changed from "${pc.old_value ?? "(empty)"}" to "${pc.new_value ?? "(empty)"}" (reason: ${pc.feedback})`
+).join("\n")}
+
+IMPORTANT: If a field was already corrected, only change it again if the new feedback contradicts or extends the prior correction. Note any overlap in your reasoning.`
+    : "";
+
+  const existingRulesSection = existingRules.length > 0
+    ? `\n\nEXISTING BEHAVIORAL RULES (previously created from corrections on these cards):
+${existingRules.map((r) =>
+  `- [RULE ID:${r.id}] "${r.title}" (${r.type}/${r.scope}): ${r.instruction}`
+).join("\n")}
+
+IMPORTANT: If your behavioral suggestion overlaps with or refines an existing rule above, set "action": "update" and "update_id": <the rule ID> instead of creating a new one. Only use "action": "create" if the suggestion is genuinely new.`
+    : "";
+
   const prompt = `The AI agent was asked a question and gave a response. The user is reporting a problem with the response.
 
 USER'S QUESTION: ${agentQuestion}
@@ -64,9 +102,10 @@ USER'S QUESTION: ${agentQuestion}
 AGENT'S RESPONSE: ${agentAnswer}
 
 USER'S FEEDBACK: ${userFeedback}
-
+${sourceQAs.length > 0 ? `
 SOURCE Q&A CARDS (these produced the response):
-${sourceCards}
+${sourceCards}` : `
+NOTE: No source Q&A cards were used for this response. Focus on suggesting a behavioral rule if the feedback warrants one.`}${priorSection}${existingRulesSection}
 
 Based on the user's feedback, determine:
 1. Which source Q&A cards need updating and what specific fields should change
@@ -88,11 +127,13 @@ Return JSON:
     }
   ],
   "behavioral_suggestion": null | {
+    "action": "create" | "update",
+    "update_id": <existing rule ID if action is "update", omit if "create">,
     "scope": "global" | "category",
     "category_name": "category name if scope is category",
     "type": "knowledge" | "solution" | "general",
     "title": "short rule name (3-6 words)",
-    "instruction": "the behavioral rule the agent should follow"
+    "instruction": "the updated or new behavioral rule the agent should follow"
   }
 }
 
@@ -145,6 +186,8 @@ IMPORTANT:
     const behavioral_suggestion: BehavioralSuggestion | null =
       bs && bs.title && bs.instruction
         ? {
+            action: bs.action === "update" && bs.update_id ? "update" : "create",
+            update_id: bs.action === "update" && bs.update_id ? Number(bs.update_id) : undefined,
             scope: bs.scope === "category" ? "category" : "global",
             category_name: bs.category_name ?? undefined,
             type: ["knowledge", "solution", "general"].includes(bs.type) ? bs.type : "general",

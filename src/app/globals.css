@@ -206,3 +206,12 @@ button, a, input, textarea, select {
   border-top: 1px solid var(--border);
   margin: 10px 0;
 }
+.agent-markdown .agent-link {
+  color: var(--mint);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 0.15s ease;
+}
+.agent-markdown .agent-link:hover {
+  color: var(--mint-dark);
+}
