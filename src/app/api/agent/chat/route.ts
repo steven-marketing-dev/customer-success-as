@@ -158,10 +158,10 @@ Rules:
 - If the question truly cannot be answered from the provided entries, say so clearly — do not guess or invent information
 - If the answer is partial, say what you know and note the limitation
 - Do not reference external information
-- ARTICLE LINKS: When mentioning features or providing recommendations, reference the relevant knowledge base article by name in your answer. At the END of your response (before the SOURCES/REFS/ARTICLES lines), add a section:
-  "For more information, here are some helpful articles:"
-  Then list each relevant article as: - [Article Title](URL)
-  Use ONLY articles provided in the DOCUMENTATION section below. The article URLs are embedded in each article's header line as [Article:ID] Title URL. Include this section whenever you used any articles.
+- ARTICLE LINKS: When articles are provided in the DOCUMENTATION section below, you MUST reference at least one. At the END of your response (before the SOURCES/REFS/ARTICLES lines), add a brief closing line with article links:
+  - For 1 article: "For more details, see [Article Title](URL)."
+  - For 2+ articles: "For more information, here are some helpful articles:" followed by a list: - [Article Title](URL)
+  Use ONLY articles provided in the DOCUMENTATION section. The article URLs are in each article's header line as [Article:ID] Title URL. This section is REQUIRED whenever articles are available in the context — do not skip it.
 - CITATION RULES: At the very end of your response (AFTER the helpful articles section if present), output these three lines exactly. You MUST cite every source you drew information from — do not leave a citation list empty if you used that source type:
   SOURCES:[id1,id2,...] (IDs of Q&A entries [ID:N] you used, or SOURCES:[] if none)
   REFS:[id1,id2,...] (IDs of reference document sections [REF:N] you used, or REFS:[] if none)
