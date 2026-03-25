@@ -214,7 +214,7 @@ ${context}
         }
 
         // Parse SOURCES:[...] and REFS:[...] from the end of the response
-        const sourcesMatch = fullText.match(/SOURCES:\[([^\]]*)\]/m);
+        const sourcesMatch = fullText.match(/SOURCES:\s*\[([^\]]*)\]/m);
         const usedIds = sourcesMatch?.[1]
           ? sourcesMatch[1].split(",").map((s) => parseInt(s.trim(), 10)).filter(Boolean)
           : [];
@@ -224,7 +224,7 @@ ${context}
           : [];
 
         // Parse REFS:[id,...] from the response
-        const refsMatch = fullText.match(/REFS:\[([^\]]*)\]/m);
+        const refsMatch = fullText.match(/REFS:\s*\[([^\]]*)\]/m);
         const usedRefIds = refsMatch?.[1]
           ? refsMatch[1].split(",").map((s) => parseInt(s.trim(), 10)).filter(Boolean)
           : [];
@@ -233,7 +233,7 @@ ${context}
           : [];
 
         // Parse ARTICLES:[id,...] from the response
-        const articlesMatch = fullText.match(/ARTICLES:\[([^\]]*)\]/m);
+        const articlesMatch = fullText.match(/ARTICLES:\s*\[([^\]]*)\]/m);
         const usedArticleIds = articlesMatch?.[1]
           ? articlesMatch[1].split(",").map((s) => parseInt(s.trim(), 10)).filter(Boolean)
           : [];
@@ -243,9 +243,9 @@ ${context}
 
         // Strip SOURCES, REFS, and ARTICLES lines from the answer
         const cleanAnswer = fullText
-          .replace(/\n?SOURCES:\[[^\]]*\]/m, "")
-          .replace(/\n?REFS:\[[^\]]*\]/m, "")
-          .replace(/\n?ARTICLES:\[[^\]]*\]/m, "")
+          .replace(/\n?SOURCES:\s*\[[^\]]*\]/gm, "")
+          .replace(/\n?REFS:\s*\[[^\]]*\]/gm, "")
+          .replace(/\n?ARTICLES:\s*\[[^\]]*\]/gm, "")
           .trim();
 
         // Extract relevant excerpts from cited content by finding the best-matching paragraph

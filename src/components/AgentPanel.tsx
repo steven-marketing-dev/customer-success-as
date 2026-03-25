@@ -12,13 +12,11 @@ function renderMarkdown(text: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 
-  // Code blocks (```...```)
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) =>
-    `<pre class="agent-code-block"><code>${code.trimEnd()}</code></pre>`
-  );
+  // Strip code fences but keep the text content
+  html = html.replace(/```\w*\n([\s\S]*?)```/g, (_m, code) => code.trimEnd());
 
-  // Inline code (`...`)
-  html = html.replace(/`([^`]+)`/g, '<code class="agent-inline-code">$1</code>');
+  // Strip backticks from inline code
+  html = html.replace(/`([^`]+)`/g, "$1");
 
   // Links [text](url)
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="agent-link">$1</a>');
@@ -706,9 +704,9 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
             if (event.type === "delta") {
               streamedText += event.text;
               const visible = streamedText
-                .replace(/\n?SOURCES:\[[^\]]*\]?\s*/m, "")
-                .replace(/\n?REFS:\[[^\]]*\]?\s*/m, "")
-                .replace(/\n?ARTICLES:\[[^\]]*\]?\s*/m, "");
+                .replace(/\n?SOURCES:\s*\[[^\]]*\]?\s*/gm, "")
+                .replace(/\n?REFS:\s*\[[^\]]*\]?\s*/gm, "")
+                .replace(/\n?ARTICLES:\s*\[[^\]]*\]?\s*/gm, "");
               setMessages((prev) => [
                 ...prev.slice(0, -1),
                 { role: "assistant", content: visible, streaming: true },
