@@ -165,7 +165,7 @@ Rules:
 - CITATION RULES: At the very end of your response (AFTER the helpful articles section if present), output these three lines exactly. You MUST cite every source you drew information from — do not leave a citation list empty if you used that source type:
   SOURCES:[id1,id2,...] (IDs of Q&A entries [ID:N] you used, or SOURCES:[] if none)
   REFS:[id1,id2,...] (IDs of reference document sections [REF:N] you used, or REFS:[] if none)
-  ARTICLES:[id1,id2,...] (IDs of articles [Article:N] you used, or ARTICLES:[] if none)
+  ARTICLES:[id1,id2,...] (IDs of articles [Article:N] you referenced — MUST NOT be empty if DOCUMENTATION section was provided above)
 ${(() => {
   const rules: string[] = [];
   for (const r of globalRules) {
@@ -189,7 +189,7 @@ ${refDocsContext ? `
 ${refDocsContext}
 --- END REFERENCE DOCUMENTS ---` : ""}
 ${articlesContext ? `
---- DOCUMENTATION (public KB articles) ---
+--- DOCUMENTATION (${articles.length} public KB article${articles.length !== 1 ? "s" : ""} — you MUST link at least one below your answer) ---
 ${articlesContext}
 --- END DOCUMENTATION ---` : ""}
 
