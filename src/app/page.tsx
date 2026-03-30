@@ -11,10 +11,11 @@ import { TermsPanel } from "@/components/TermsPanel";
 import { ArticlesPanel } from "@/components/ArticlesPanel";
 import { BehavioralCardsPanel } from "@/components/BehavioralCardsPanel";
 import { RefDocsPanel } from "@/components/RefDocsPanel";
+import VideoGuidesPanel from "@/components/VideoGuidesPanel";
 import { QACard, type QAItem } from "@/components/QACard";
 
 type Tab = "dashboard" | "kb" | "pipeline" | "agent" | "glossary";
-type KBSubTab = "qa" | "articles" | "refs";
+type KBSubTab = "qa" | "articles" | "refs" | "videos";
 type AgentSubTab = "chat" | "rules";
 
 interface KBData {
@@ -325,7 +326,7 @@ export default function Home() {
                   </div>
                   {/* Sub-tab toggle */}
                   <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">
-                    {(["qa", "articles", "refs"] as const).map((st) => (
+                    {(["qa", "articles", "refs", "videos"] as const).map((st) => (
                       <button
                         key={st}
                         onClick={() => setKbSubTab(st)}
@@ -335,7 +336,7 @@ export default function Home() {
                             : "text-slate-500 hover:text-slate-700"
                         }`}
                       >
-                        {st === "qa" ? "Q&A" : st === "articles" ? "Articles" : "References"}
+                        {st === "qa" ? "Q&A" : st === "articles" ? "Articles" : st === "refs" ? "References" : "Video Guides"}
                       </button>
                     ))}
                   </div>
@@ -367,8 +368,10 @@ export default function Home() {
                   </div>
                 ) : kbSubTab === "articles" ? (
                   <ArticlesPanel />
-                ) : (
+                ) : kbSubTab === "refs" ? (
                   <RefDocsPanel />
+                ) : (
+                  <VideoGuidesPanel />
                 )}
               </div>
             )}

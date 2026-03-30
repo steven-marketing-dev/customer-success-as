@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Play, RefreshCw, GitBranch, Loader2, CheckCircle2, AlertCircle, Radio, FlaskConical, Globe } from "lucide-react";
+import { Play, RefreshCw, GitBranch, Loader2, CheckCircle2, AlertCircle, Radio, FlaskConical, Globe, Video } from "lucide-react";
 
-type RunMode = "incremental" | "full" | "recluster" | "test" | "scrape-kb";
+type RunMode = "incremental" | "full" | "recluster" | "test" | "scrape-kb" | "extract-loom";
 type Status = "idle" | "running" | "done" | "error";
 
 interface PipelineStats {
@@ -177,6 +177,7 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
     { mode: "full", label: "Sync Full", desc: "All tickets", icon: RefreshCw, color: "bg-slate-700 hover:bg-slate-800 text-white" },
     { mode: "recluster", label: "Re-clustering", desc: "New taxonomy", icon: GitBranch, color: "bg-violet-600 hover:bg-violet-700 text-white" },
     { mode: "scrape-kb", label: "Scrape KB", desc: "Public articles", icon: Globe, color: "bg-cyan-600 hover:bg-cyan-700 text-white" },
+    { mode: "extract-loom", label: "Extract Videos", desc: "Loom process cards", icon: Video, color: "bg-rose-600 hover:bg-rose-700 text-white" },
   ];
 
   return (

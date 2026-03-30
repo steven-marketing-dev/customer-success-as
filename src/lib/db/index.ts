@@ -160,6 +160,21 @@ export interface MessageRating {
   created_at: number;
 }
 
+export interface ProcessCard {
+  id: number;
+  loom_video_id: string;
+  loom_url: string;
+  title: string;
+  summary: string;
+  steps: string; // JSON array of strings
+  transcript: string | null;
+  source_type: string; // 'qa' | 'article' | 'ref_doc'
+  source_id: number;
+  content_hash: string;
+  created_at: number;
+  updated_at: number | null;
+}
+
 // Singleton DB connection
 
 declare global {
@@ -320,6 +335,32 @@ function initDb(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_ref_doc_sections_doc ON ref_doc_sections(doc_id);
 
+    CREATE TABLE IF NOT EXISTS process_cards (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      loom_video_id TEXT NOT NULL,
+      loom_url TEXT NOT NULL,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      steps TEXT NOT NULL,
+      transcript TEXT,
+      source_type TEXT NOT NULL CHECK(source_type IN ('qa', 'article', 'ref_doc')),
+      source_id INTEGER NOT NULL,
+      content_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_process_cards_video_title ON process_cards(loom_video_id, title);
+    CREATE INDEX IF NOT EXISTS idx_process_cards_video ON process_cards(loom_video_id);
+    CREATE INDEX IF NOT EXISTS idx_process_cards_source ON process_cards(source_type, source_id);
+
+    CREATE TABLE IF NOT EXISTS term_process_card_map (
+      term_id INTEGER NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+      process_card_id INTEGER NOT NULL REFERENCES process_cards(id) ON DELETE CASCADE,
+      PRIMARY KEY (term_id, process_card_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_term_pc_map_term ON term_process_card_map(term_id);
+    CREATE INDEX IF NOT EXISTS idx_term_pc_map_card ON term_process_card_map(process_card_id);
+
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
@@ -406,6 +447,11 @@ function initDb(db: Database.Database) {
         content='ref_doc_sections', content_rowid='id',
         tokenize='porter unicode61'
       );
+      CREATE VIRTUAL TABLE IF NOT EXISTS process_cards_fts USING fts5(
+        title, summary, steps,
+        content='process_cards', content_rowid='id',
+        tokenize='porter unicode61'
+      );
     `);
   } catch { /* FTS tables already exist */ }
 
@@ -414,6 +460,7 @@ function initDb(db: Database.Database) {
     db.exec("INSERT INTO qa_pairs_fts(qa_pairs_fts) VALUES('rebuild')");
     db.exec("INSERT INTO kb_articles_fts(kb_articles_fts) VALUES('rebuild')");
     db.exec("INSERT INTO ref_doc_sections_fts(ref_doc_sections_fts) VALUES('rebuild')");
+    db.exec("INSERT INTO process_cards_fts(process_cards_fts) VALUES('rebuild')");
   } catch { /* source tables may be empty */ }
 
   // Seed master account if no users exist
@@ -455,5 +502,6 @@ export function rebuildFtsIndexes(db?: ReturnType<typeof getDb>): void {
     d.exec("INSERT INTO qa_pairs_fts(qa_pairs_fts) VALUES('rebuild')");
     d.exec("INSERT INTO kb_articles_fts(kb_articles_fts) VALUES('rebuild')");
     d.exec("INSERT INTO ref_doc_sections_fts(ref_doc_sections_fts) VALUES('rebuild')");
+    d.exec("INSERT INTO process_cards_fts(process_cards_fts) VALUES('rebuild')");
   } catch { /* tables may not exist yet */ }
 }

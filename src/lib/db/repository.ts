@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import crypto from "crypto";
-import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating } from "./index";
+import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard } from "./index";
 
 export class Repository {
   private db: Database.Database;
@@ -541,6 +541,7 @@ export class Repository {
   autoLinkTermToAll(termId: number): void {
     this.autoLinkTermToAllQAs(termId);
     this.autoLinkTermToAllArticles(termId);
+    this.autoLinkTermToAllProcessCards(termId);
   }
 
   autoLinkTermToAllQAs(termId: number): void {
@@ -1162,5 +1163,128 @@ export class Repository {
     const map: Record<number, { rating: number; feedback: string | null }> = {};
     for (const r of rows) map[r.message_id] = { rating: r.rating, feedback: r.feedback };
     return map;
+  }
+
+  // ─── Process Cards ────────────────────────────────────────────────────────
+
+  upsertProcessCard(data: {
+    loom_video_id: string;
+    loom_url: string;
+    title: string;
+    summary: string;
+    steps: string; // JSON array
+    transcript: string | null;
+    source_type: string;
+    source_id: number;
+    content_hash: string;
+  }): { action: "created" | "updated" | "unchanged"; card: ProcessCard } {
+    const existing = this.db.prepare(
+      "SELECT * FROM process_cards WHERE loom_video_id = ? AND title = ?"
+    ).get(data.loom_video_id, data.title) as ProcessCard | undefined;
+
+    if (existing) {
+      if (existing.content_hash === data.content_hash) {
+        return { action: "unchanged", card: existing };
+      }
+      this.db.prepare(
+        `UPDATE process_cards SET summary = ?, steps = ?, transcript = ?, content_hash = ?,
+         source_type = ?, source_id = ?, updated_at = unixepoch() WHERE id = ?`
+      ).run(data.summary, data.steps, data.transcript, data.content_hash,
+        data.source_type, data.source_id, existing.id);
+      return { action: "updated", card: this.getProcessCardById(existing.id)! };
+    }
+
+    const info = this.db.prepare(
+      `INSERT INTO process_cards (loom_video_id, loom_url, title, summary, steps, transcript,
+       source_type, source_id, content_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(data.loom_video_id, data.loom_url, data.title, data.summary, data.steps,
+      data.transcript, data.source_type, data.source_id, data.content_hash);
+    return { action: "created", card: this.getProcessCardById(Number(info.lastInsertRowid))! };
+  }
+
+  getProcessCardById(id: number): ProcessCard | undefined {
+    return this.db.prepare("SELECT * FROM process_cards WHERE id = ?").get(id) as ProcessCard | undefined;
+  }
+
+  getProcessCardsByVideoId(videoId: string): ProcessCard[] {
+    return this.db.prepare("SELECT * FROM process_cards WHERE loom_video_id = ?").all(videoId) as ProcessCard[];
+  }
+
+  getAllProcessCards(limit?: number): ProcessCard[] {
+    const sql = limit
+      ? `SELECT * FROM process_cards ORDER BY created_at DESC LIMIT ${limit}`
+      : "SELECT * FROM process_cards ORDER BY created_at DESC";
+    return this.db.prepare(sql).all() as ProcessCard[];
+  }
+
+  countProcessCards(): number {
+    return (this.db.prepare("SELECT COUNT(*) as n FROM process_cards").get() as { n: number }).n;
+  }
+
+  deleteProcessCard(id: number): void {
+    this.db.prepare("DELETE FROM term_process_card_map WHERE process_card_id = ?").run(id);
+    this.db.prepare("DELETE FROM process_cards WHERE id = ?").run(id);
+  }
+
+  searchProcessCards(query: string, limit = 10): Array<ProcessCard & { source_label?: string }> {
+    const ftsQuery = this.buildFtsQuery(query);
+    if (!ftsQuery) {
+      return this.db.prepare(
+        "SELECT * FROM process_cards ORDER BY created_at DESC LIMIT ?"
+      ).all(limit) as ProcessCard[];
+    }
+    return this.db.prepare(`
+      SELECT pc.*, bm25(process_cards_fts, 5.0, 2.0, 1.0) as score
+      FROM process_cards_fts fts
+      JOIN process_cards pc ON pc.id = fts.rowid
+      WHERE process_cards_fts MATCH ?
+      ORDER BY score ASC LIMIT ?
+    `).all(ftsQuery, limit) as Array<ProcessCard & { source_label?: string }>;
+  }
+
+  getHashForVideoId(videoId: string): string | null {
+    const row = this.db.prepare(
+      "SELECT content_hash FROM process_cards WHERE loom_video_id = ? LIMIT 1"
+    ).get(videoId) as { content_hash: string } | undefined;
+    return row?.content_hash ?? null;
+  }
+
+  linkTermToProcessCard(termId: number, cardId: number): void {
+    this.db.prepare("INSERT OR IGNORE INTO term_process_card_map (term_id, process_card_id) VALUES (?, ?)").run(termId, cardId);
+  }
+
+  autoLinkTermsToProcessCard(cardId: number): void {
+    const card = this.getProcessCardById(cardId);
+    if (!card) return;
+    const text = [card.title, card.summary, card.steps].filter(Boolean).join(" ").toLowerCase();
+    const terms = this.getAllTerms();
+    for (const term of terms) {
+      const names = [term.name, ...JSON.parse(term.aliases || "[]") as string[]];
+      if (names.some((n) => text.includes(n.toLowerCase()))) {
+        this.linkTermToProcessCard(term.id, cardId);
+      }
+    }
+  }
+
+  autoLinkTermToAllProcessCards(termId: number): void {
+    const term = this.getTermById(termId);
+    if (!term) return;
+    const names = [term.name, ...JSON.parse(term.aliases || "[]") as string[]].map((n) => n.toLowerCase());
+    this.db.prepare("DELETE FROM term_process_card_map WHERE term_id = ?").run(termId);
+    const all = this.db.prepare("SELECT id, title, summary, steps FROM process_cards").all() as ProcessCard[];
+    for (const card of all) {
+      const text = [card.title, card.summary, card.steps].filter(Boolean).join(" ").toLowerCase();
+      if (names.some((n) => text.includes(n))) {
+        this.linkTermToProcessCard(termId, card.id);
+      }
+    }
+  }
+
+  getTermsForProcessCard(cardId: number): Term[] {
+    return this.db.prepare(`
+      SELECT t.* FROM terms t
+      JOIN term_process_card_map m ON m.term_id = t.id
+      WHERE m.process_card_id = ?
+    `).all(cardId) as Term[];
   }
 }

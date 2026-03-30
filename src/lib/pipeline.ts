@@ -4,9 +4,12 @@ import { Categorizer } from "./ai/categorizer";
 import { mergeOrCreate } from "./ai/merger";
 import { getProvider } from "./ai/provider";
 import { extractTerms, extractTermsFromArticles } from "./ai/termExtractor";
+import { extractProcessCards } from "./ai/processCardExtractor";
 import { Repository } from "./db/repository";
 import { getDb, rebuildFtsIndexes } from "./db/index";
 import { runScrape } from "./scraper";
+import { extractLoomUrls, fetchLoomTranscript } from "./loom-fetcher";
+import crypto from "crypto";
 
 export type PipelineEvent =
   | { type: "log"; message: string }
@@ -24,7 +27,7 @@ export interface PipelineStats {
 }
 
 export interface PipelineOptions {
-  mode: "incremental" | "full" | "recluster" | "test" | "scrape-kb";
+  mode: "incremental" | "full" | "recluster" | "test" | "scrape-kb" | "extract-loom";
   testLimit?: number;
   onProgress?: (event: PipelineEvent) => void;
 }
@@ -107,6 +110,126 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
 
     log(`✓ Term extraction complete: ${termsCreated} new terms`);
     rebuildFtsIndexes();
+    emit({ type: "done", stats });
+    return stats;
+  }
+
+  // ── Extract Loom mode: scan for Loom URLs, fetch transcripts, create process cards
+  if (mode === "extract-loom") {
+    log("Scanning content for Loom video URLs...");
+    const db = getDb();
+
+    // Collect all Loom URLs from QA answers, KB articles, and ref doc sections
+    const videoMap = new Map<string, { url: string; sources: Array<{ type: string; id: number }> }>();
+
+    const qaRows = db.prepare("SELECT id, answer FROM qa_pairs WHERE answer LIKE '%loom.com/share/%'").all() as Array<{ id: number; answer: string }>;
+    for (const row of qaRows) {
+      for (const match of extractLoomUrls(row.answer)) {
+        const entry = videoMap.get(match.videoId) ?? { url: match.url, sources: [] };
+        entry.sources.push({ type: "qa", id: row.id });
+        videoMap.set(match.videoId, entry);
+      }
+    }
+
+    const artRows = db.prepare("SELECT id, content FROM kb_articles WHERE content LIKE '%loom.com/share/%'").all() as Array<{ id: number; content: string }>;
+    for (const row of artRows) {
+      for (const match of extractLoomUrls(row.content)) {
+        const entry = videoMap.get(match.videoId) ?? { url: match.url, sources: [] };
+        entry.sources.push({ type: "article", id: row.id });
+        videoMap.set(match.videoId, entry);
+      }
+    }
+
+    const refRows = db.prepare("SELECT id, content FROM ref_doc_sections WHERE content LIKE '%loom.com/share/%'").all() as Array<{ id: number; content: string }>;
+    for (const row of refRows) {
+      for (const match of extractLoomUrls(row.content)) {
+        const entry = videoMap.get(match.videoId) ?? { url: match.url, sources: [] };
+        entry.sources.push({ type: "ref_doc", id: row.id });
+        videoMap.set(match.videoId, entry);
+      }
+    }
+
+    log(`Found ${videoMap.size} unique Loom videos across ${qaRows.length + artRows.length + refRows.length} content rows`);
+
+    let completed = 0;
+    let created = 0;
+    let updated = 0;
+    let unchanged = 0;
+    let failed = 0;
+    const videos = [...videoMap.entries()];
+
+    for (const [videoId, entry] of videos) {
+      completed++;
+      emit({ type: "progress", current: completed, total: videos.length, message: `Processing video ${completed}/${videos.length}` });
+
+      try {
+        // Check if transcript already processed (by content hash)
+        const existingHash = repo.getHashForVideoId(videoId);
+
+        // Fetch transcript
+        const result = await fetchLoomTranscript(videoId);
+        if (!result) {
+          log(`  ✗ Video ${videoId}: failed to fetch transcript`);
+          failed++;
+          continue;
+        }
+
+        const contentHash = crypto.createHash("sha256").update(result.transcript).digest("hex");
+        if (existingHash === contentHash) {
+          unchanged++;
+          continue;
+        }
+
+        // Build source context for the AI
+        const primarySource = entry.sources[0];
+        let sourceContext = `${primarySource.type} #${primarySource.id}`;
+        if (primarySource.type === "qa") {
+          const qa = db.prepare("SELECT question FROM qa_pairs WHERE id = ?").get(primarySource.id) as { question: string } | undefined;
+          if (qa) sourceContext = `QA: ${qa.question.slice(0, 100)}`;
+        }
+
+        // AI extraction
+        const cards = await extractProcessCards(result.transcript, sourceContext);
+        if (cards.length === 0) {
+          log(`  - Video ${videoId}: no actionable processes found`);
+          continue;
+        }
+
+        for (const card of cards) {
+          const { action, card: savedCard } = repo.upsertProcessCard({
+            loom_video_id: videoId,
+            loom_url: entry.url,
+            title: card.title,
+            summary: card.summary,
+            steps: JSON.stringify(card.steps),
+            transcript: result.transcript,
+            source_type: primarySource.type,
+            source_id: primarySource.id,
+            content_hash: contentHash,
+          });
+
+          if (action === "created") {
+            created++;
+            repo.autoLinkTermsToProcessCard(savedCard.id);
+            log(`  + ${card.title} (${card.steps.length} steps)`);
+          } else if (action === "updated") {
+            updated++;
+            repo.autoLinkTermsToProcessCard(savedCard.id);
+            log(`  ~ ${card.title} (updated)`);
+          } else {
+            unchanged++;
+          }
+        }
+      } catch (err) {
+        failed++;
+        log(`  ✗ Video ${videoId}: ${err}`);
+      }
+    }
+
+    rebuildFtsIndexes();
+    stats.qa_extracted = created + updated;
+    stats.errors = failed;
+    log(`✓ Loom extraction complete: ${created} created, ${updated} updated, ${unchanged} unchanged, ${failed} failed`);
     emit({ type: "done", stats });
     return stats;
   }

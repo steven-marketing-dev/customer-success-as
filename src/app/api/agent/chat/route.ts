@@ -3,6 +3,7 @@ import { Repository } from "@/lib/db/repository";
 import { getDb, type QAPair } from "@/lib/db/index";
 import { streamChat, type ChatMessage } from "@/lib/ai/provider";
 import { requireAuth } from "@/lib/auth";
+import { detectReportUrls, fetchReportData, formatReportContext } from "@/lib/report-fetcher";
 
 export const maxDuration = 60;
 
@@ -30,6 +31,25 @@ export async function POST(req: NextRequest) {
       conversationId = conv.id;
     }
     repo.addMessage({ conversation_id: conversationId, role: "user", content: question });
+  }
+
+  // Detect assessment report URLs in the question
+  const reportUrls = detectReportUrls(question);
+  let reportContext = "";
+  let reportFailed = false;
+  const detectedReportUrl = reportUrls[0] ?? null;
+
+  if (detectedReportUrl) {
+    try {
+      const report = await fetchReportData(detectedReportUrl);
+      if (report.success) {
+        reportContext = formatReportContext(report);
+      } else {
+        reportFailed = true;
+      }
+    } catch {
+      reportFailed = true;
+    }
   }
 
   // Retrieve relevant Q&A pairs using keyword scoring (not exact LIKE match)
@@ -68,11 +88,33 @@ export async function POST(req: NextRequest) {
   } catch (e) { console.warn("[agent/chat] behavioral_cards fetch error:", e); }
 
   // Retrieve matching reference document sections (active docs only)
+  // Boost limit + add assessment terms when a report URL is detected
   let refDocSections: Awaited<ReturnType<typeof repo.searchRefDocSections>> = [];
   try {
-    refDocSections = repo.searchRefDocSections(question, 6);
+    const refLimit = detectedReportUrl ? 10 : 6;
+    refDocSections = repo.searchRefDocSections(question, refLimit);
+
+    // When a report URL is present, also search for assessment methodology context
+    if (detectedReportUrl) {
+      const assessmentBoost = repo.searchRefDocSections(
+        "overall recommendation scoring trait assessment methodology interpretation results",
+        6
+      );
+      const seenRefIds = new Set(refDocSections.map((s) => s.id));
+      for (const s of assessmentBoost) {
+        if (!seenRefIds.has(s.id)) {
+          refDocSections.push(s);
+          seenRefIds.add(s.id);
+        }
+      }
+    }
   } catch (e) { console.warn("[agent/chat] ref_docs fetch error:", e); }
-  console.log(`[agent/chat] Ref doc sections found: ${refDocSections.length}`, refDocSections.map(s => s.heading));
+
+  // Retrieve matching process cards (video walkthroughs)
+  let processCards: Awaited<ReturnType<typeof repo.searchProcessCards>> = [];
+  try {
+    processCards = repo.searchProcessCards(question, 3);
+  } catch (e) { console.warn("[agent/chat] process_cards fetch error:", e); }
 
   // Build glossary context
   const glossaryContext = matchedTerms.length > 0
@@ -99,6 +141,15 @@ export async function POST(req: NextRequest) {
     ? refDocSections.map((s) => {
         const truncated = s.content.length > 2000 ? s.content.slice(0, 2000) + "..." : s.content;
         return `[REF:${s.id}] ${s.doc_title} > ${s.heading}\n${truncated}`;
+      }).join("\n\n")
+    : "";
+
+  // Build process cards context (video walkthroughs)
+  const processCardsContext = processCards.length > 0
+    ? processCards.map((pc) => {
+        let steps: string[] = [];
+        try { steps = JSON.parse(pc.steps); } catch { /* */ }
+        return `[VIDEO:${pc.id}] ${pc.title}\nSummary: ${pc.summary}\nSteps:\n${steps.map((s, i) => `  ${i + 1}. ${s}`).join("\n")}\nVideo: ${pc.loom_url}`;
       }).join("\n\n")
     : "";
 
@@ -166,6 +217,7 @@ Rules:
   SOURCES:[id1,id2,...] (IDs of Q&A entries [ID:N] you used, or SOURCES:[] if none)
   REFS:[id1,id2,...] (IDs of reference document sections [REF:N] you used, or REFS:[] if none)
   ARTICLES:[id1,id2,...] (IDs of articles [Article:N] you referenced — MUST NOT be empty if DOCUMENTATION section was provided above)
+  VIDEOS:[id1,id2,...] (IDs of video walkthrough entries [VIDEO:N] you used, or VIDEOS:[] if none)
 ${(() => {
   const rules: string[] = [];
   for (const r of globalRules) {
@@ -188,10 +240,27 @@ ${refDocsContext ? `
 --- REFERENCE DOCUMENTS (training materials & product manuals — use these for trait definitions, assessment methodology, scoring, and validation) ---
 ${refDocsContext}
 --- END REFERENCE DOCUMENTS ---` : ""}
+${reportContext ? `
+--- ASSESSMENT REPORT DATA (extracted from ${detectedReportUrl}) ---
+${reportContext}
+--- END ASSESSMENT REPORT DATA ---
+
+ASSESSMENT REPORT ANALYSIS INSTRUCTIONS:
+The user shared an assessment report. Cross-reference the scores above against the REFERENCE DOCUMENTS which contain official scoring methodology and trait definitions. Explain HOW trait scores map to the overall recommendation — some traits are weighted more heavily or have "red flag" thresholds that trigger a poor recommendation regardless of average scores. Cite actual scores from the report and methodology from ref docs when explaining.` : ""}
+${reportFailed && detectedReportUrl ? `
+NOTE: The user referenced an assessment report (${detectedReportUrl}) but the system could not automatically extract the data from the report page. Ask the user to copy and paste the key information from the report so you can analyze it. Guide them on what to share:
+- Overall recommendation and score
+- Individual trait/dimension scores (name + score + rating)
+- Any specific sections they have questions about
+Once they paste the data, use the REFERENCE DOCUMENTS to explain the scoring methodology and how individual scores contribute to the overall recommendation.` : ""}
 ${articlesContext ? `
 --- DOCUMENTATION (${articles.length} public KB article${articles.length !== 1 ? "s" : ""} — you MUST link at least one below your answer) ---
 ${articlesContext}
 --- END DOCUMENTATION ---` : ""}
+${processCardsContext ? `
+--- VIDEO WALKTHROUGHS (step-by-step processes extracted from training videos) ---
+${processCardsContext}
+--- END VIDEO WALKTHROUGHS ---` : ""}
 
 --- SUPPORT Q&A (past customer tickets) ---
 ${context}
@@ -241,11 +310,21 @@ ${context}
           ? articles.filter((a) => usedArticleIds.includes(a.id))
           : [];
 
-        // Strip SOURCES, REFS, and ARTICLES lines from the answer
+        // Parse VIDEOS:[id,...] from the response
+        const videosMatch = fullText.match(/VIDEOS:\s*\[([^\]]*)\]/m);
+        const usedVideoIds = videosMatch?.[1]
+          ? videosMatch[1].split(",").map((s) => parseInt(s.trim(), 10)).filter(Boolean)
+          : [];
+        const citedVideos = usedVideoIds.length > 0
+          ? processCards.filter((pc) => usedVideoIds.includes(pc.id))
+          : [];
+
+        // Strip SOURCES, REFS, ARTICLES, and VIDEOS lines from the answer
         const cleanAnswer = fullText
           .replace(/\n?SOURCES:\s*\[[^\]]*\]/gm, "")
           .replace(/\n?REFS:\s*\[[^\]]*\]/gm, "")
           .replace(/\n?ARTICLES:\s*\[[^\]]*\]/gm, "")
+          .replace(/\n?VIDEOS:\s*\[[^\]]*\]/gm, "")
           .trim();
 
         // Extract relevant excerpts from cited content by finding the best-matching paragraph
@@ -273,11 +352,12 @@ ${context}
         const doneArticles = citedArticles.map((a) => ({ id: a.id, title: a.title, url: a.url, category: a.category, excerpt: extractExcerpt(a.content, cleanAnswer) }));
         const doneTerms = matchedTerms.map((t) => ({ id: t.id, name: t.name, definition: t.definition }));
         const doneRefSections = citedRefSections.map((s) => ({ id: s.id, doc_title: s.doc_title, heading: s.heading, excerpt: extractExcerpt(s.content, cleanAnswer), content: s.content }));
+        const doneVideos = citedVideos.map((v) => ({ id: v.id, title: v.title, loom_url: v.loom_url, summary: v.summary }));
 
         // Persist assistant message
         let messageId: number | null = null;
         if (userId > 0 && conversationId) {
-          const sourcesJson = JSON.stringify({ sources, articles: doneArticles, terms: doneTerms, refSections: doneRefSections });
+          const sourcesJson = JSON.stringify({ sources, articles: doneArticles, terms: doneTerms, refSections: doneRefSections, videos: doneVideos });
           const msg = repo.addMessage({ conversation_id: conversationId, role: "assistant", content: cleanAnswer, sources_json: sourcesJson });
           messageId = msg.id;
         }
@@ -289,6 +369,7 @@ ${context}
           articles: doneArticles,
           terms: doneTerms,
           refSections: doneRefSections,
+          videos: doneVideos,
           conversationId,
           messageId,
         });

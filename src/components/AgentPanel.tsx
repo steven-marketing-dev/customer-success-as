@@ -132,6 +132,13 @@ interface RefSectionRef {
   content: string;
 }
 
+interface VideoRef {
+  id: number;
+  title: string;
+  loom_url: string;
+  summary: string;
+}
+
 interface Message {
   role: "user" | "assistant";
   content: string;
@@ -139,6 +146,7 @@ interface Message {
   articles?: ArticleRef[];
   terms?: TermRef[];
   refSections?: RefSectionRef[];
+  videos?: VideoRef[];
   streaming?: boolean;
   messageId?: number | null;
   rating?: number | null;
@@ -623,6 +631,7 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
             msg.articles = parsed.articles;
             msg.terms = parsed.terms;
             msg.refSections = parsed.refSections;
+            msg.videos = parsed.videos;
           } catch { /* ignore */ }
         }
         // Attach saved rating
@@ -706,7 +715,8 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
               const visible = streamedText
                 .replace(/\n?SOURCES:\s*\[[^\]]*\]?\s*/gm, "")
                 .replace(/\n?REFS:\s*\[[^\]]*\]?\s*/gm, "")
-                .replace(/\n?ARTICLES:\s*\[[^\]]*\]?\s*/gm, "");
+                .replace(/\n?ARTICLES:\s*\[[^\]]*\]?\s*/gm, "")
+                .replace(/\n?VIDEOS:\s*\[[^\]]*\]?\s*/gm, "");
               setMessages((prev) => [
                 ...prev.slice(0, -1),
                 { role: "assistant", content: visible, streaming: true },
@@ -726,6 +736,7 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
                   articles: event.articles ?? [],
                   terms: event.terms ?? [],
                   refSections: event.refSections ?? [],
+                  videos: event.videos ?? [],
                   streaming: false,
                   messageId: event.messageId ?? null,
                 },
@@ -945,7 +956,31 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
                     </div>
                   )}
 
-                  {!msg.streaming && (!msg.sources || msg.sources.length === 0) && (!msg.articles || msg.articles.length === 0) && (!msg.refSections || msg.refSections.length === 0) && msg.role === "assistant" && msg.content && (
+                  {/* Video walkthroughs */}
+                  {!msg.streaming && msg.videos && msg.videos.length > 0 && (
+                    <div className="w-full">
+                      <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                        <span>{msg.videos.length} video walkthrough{msg.videos.length !== 1 ? "s" : ""}</span>
+                      </div>
+                      <div className="grid grid-cols-1 gap-1.5">
+                        {msg.videos.map((v) => (
+                          <a key={v.id} href={v.loom_url} target="_blank" rel="noopener noreferrer"
+                            className="flex items-start gap-2 p-2.5 rounded-lg border border-slate-100 bg-slate-50/50 hover:bg-mint-50/50 hover:border-mint-200 transition-colors text-xs group">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0 mt-0.5 text-slate-400 group-hover:text-mint-500">
+                              <polygon points="5 3 19 12 5 21 5 3"/>
+                            </svg>
+                            <div className="min-w-0">
+                              <p className="font-medium text-slate-700 group-hover:text-mint-700 truncate">{v.title}</p>
+                              <p className="text-slate-400 line-clamp-1 mt-0.5">{v.summary}</p>
+                            </div>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {!msg.streaming && (!msg.sources || msg.sources.length === 0) && (!msg.articles || msg.articles.length === 0) && (!msg.refSections || msg.refSections.length === 0) && (!msg.videos || msg.videos.length === 0) && msg.role === "assistant" && msg.content && (
                     <div className="flex items-center gap-1.5 text-xs text-amber-500"><AlertCircle size={11} /><span>No matching entries found</span></div>
                   )}
 
