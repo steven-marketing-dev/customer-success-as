@@ -1,7 +1,10 @@
 /**
- * Fetches a Google Doc as plain text and splits it into sections by headings.
+ * Fetches a Google Doc as HTML and splits it into sections by headings.
+ * Preserves hyperlinks (Loom URLs, etc.) that plain-text export strips.
  * Works for publicly shared docs (or "anyone with the link").
  */
+
+import * as cheerio from "cheerio";
 
 export interface DocSection {
   heading: string;
@@ -77,39 +80,76 @@ function subSplit(heading: string, content: string): DocSection[] {
   return sections;
 }
 
+/** Convert an HTML element to text, inlining link URLs */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function htmlToText($: cheerio.CheerioAPI, el: cheerio.Cheerio<any>): string {
+  let result = "";
+  el.contents().each((_, node) => {
+    if (node.type === "text") {
+      result += (node as unknown as { data: string }).data;
+    } else if (node.type === "tag") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tag = node as any;
+      const $tag = $(tag);
+      if (tag.tagName === "a") {
+        const href = $tag.attr("href") ?? "";
+        const text = $tag.text();
+        // Inline the URL if it's a real link and different from the visible text
+        if (href && href.startsWith("http") && href !== text) {
+          result += `${text} (${href})`;
+        } else {
+          result += text;
+        }
+      } else if (tag.tagName === "br") {
+        result += "\n";
+      } else if (["p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"].includes(tag.tagName)) {
+        result += "\n" + htmlToText($, $tag) + "\n";
+      } else {
+        result += htmlToText($, $tag);
+      }
+    }
+  });
+  return result;
+}
+
 export async function fetchGoogleDoc(docUrl: string): Promise<ImportResult> {
   const docId = extractDocId(docUrl);
-  const exportUrl = `https://docs.google.com/document/d/${docId}/export?format=txt`;
+
+  // Export as HTML to preserve hyperlinks (plain text export strips them)
+  const exportUrl = `https://docs.google.com/document/d/${docId}/export?format=html`;
 
   const res = await fetch(exportUrl, { redirect: "follow" });
   if (!res.ok) {
     throw new Error(`Failed to fetch Google Doc (HTTP ${res.status}). Make sure the doc is shared with "Anyone with the link".`);
   }
 
-  const text = await res.text();
-  if (!text.trim()) {
+  const html = await res.text();
+  if (!html.trim()) {
     throw new Error("Google Doc appears to be empty");
   }
 
-  const lines = text.split("\n");
+  const $ = cheerio.load(html);
 
-  // Title = first non-empty line that's not just a number (skip page numbers)
-  const titleIdx = lines.findIndex((l) => l.trim().length > 0 && !/^\d+$/.test(l.trim()));
-  const title = titleIdx >= 0 ? lines[titleIdx].trim() : "Untitled Document";
+  // Extract title from the doc
+  const title = $("title").text().trim() || $("body").find("p").first().text().trim() || "Untitled Document";
+
+  // Convert HTML body to text with links preserved
+  const text = htmlToText($, $("body"))
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  const lines = text.split("\n");
 
   // Split into sections by heading detection
   const rawSections: Array<{ heading: string; lines: string[] }> = [];
   let currentHeading = title;
   let currentLines: string[] = [];
 
-  // Start after the title line
-  const startIdx = titleIdx >= 0 ? titleIdx + 1 : 0;
-
-  for (let i = startIdx; i < lines.length; i++) {
+  for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
     if (isHeadingLine(line)) {
-      // Save previous section if it has content
       if (currentLines.some((l) => l.trim())) {
         rawSections.push({ heading: currentHeading, lines: [...currentLines] });
       }
@@ -120,7 +160,6 @@ export async function fetchGoogleDoc(docUrl: string): Promise<ImportResult> {
     }
   }
 
-  // Don't forget the last section
   if (currentLines.some((l) => l.trim())) {
     rawSections.push({ heading: currentHeading, lines: currentLines });
   }
