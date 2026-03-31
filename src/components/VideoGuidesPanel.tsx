@@ -69,7 +69,7 @@ export default function VideoGuidesPanel() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div data-tour="video-cards-grid" className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {cards.map((card) => (
             <ProcessCardItem key={card.id} card={card} />
           ))}

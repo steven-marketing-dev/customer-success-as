@@ -1,17 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { LayoutDashboard, BookOpen, Zap, RefreshCw, Trash2, MessageCircle, BookA, LogOut, UserPlus, Users, X, ChevronDown, Star, ClipboardList, AlertCircle } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { LayoutDashboard, BookOpen, Zap, RefreshCw, Trash2, MessageCircle, BookA, LogOut, UserPlus, Users, X, ChevronDown, Star, ClipboardList, AlertCircle, Sparkles } from "lucide-react";
 import { StatsGrid } from "@/components/StatsGrid";
 import { CategoryGrid, type CategorySummary } from "@/components/CategoryGrid";
 import { SearchPanel } from "@/components/SearchPanel";
 import { PipelinePanel } from "@/components/PipelinePanel";
-import { AgentPanel, type AuthUser } from "@/components/AgentPanel";
+import { AgentPanel, type AuthUser, type AgentPanelHandle } from "@/components/AgentPanel";
 import { TermsPanel } from "@/components/TermsPanel";
 import { ArticlesPanel } from "@/components/ArticlesPanel";
 import { BehavioralCardsPanel } from "@/components/BehavioralCardsPanel";
 import { RefDocsPanel } from "@/components/RefDocsPanel";
 import VideoGuidesPanel from "@/components/VideoGuidesPanel";
+import TourEngine from "@/components/TourEngine";
+import { createVideoGuidesTour } from "@/lib/tours";
 import { QACard, type QAItem } from "@/components/QACard";
 
 type Tab = "dashboard" | "kb" | "pipeline" | "agent" | "glossary";
@@ -63,6 +65,48 @@ export default function Home() {
       behavioralCards: Array<{ id: number; title: string; instruction: string; type: string; scope: string; source: string; created_at: number }>;
     };
   }>>([]);
+
+  // Agent panel ref (for tour)
+  const agentPanelRef = useRef<AgentPanelHandle>(null);
+
+  // Tour state
+  const [activeTour, setActiveTour] = useState<ReturnType<typeof createVideoGuidesTour> | null>(null);
+  const [completedTours, setCompletedTours] = useState<string[]>([]);
+
+  // Load completed tours on mount
+  useEffect(() => {
+    fetch("/api/tours").then((r) => r.json()).then((d) => setCompletedTours(d.completed ?? [])).catch(() => {});
+  }, []);
+
+  // Auto-show video guides tour for users who haven't seen it
+  useEffect(() => {
+    if (!user || completedTours.includes("video-guides-v1") || activeTour) return;
+    const t = setTimeout(() => {
+      setActiveTour(createVideoGuidesTour({
+        setTab: (t) => setTab(t as Tab),
+        setKbSubTab: (s) => setKbSubTab(s as KBSubTab),
+        setAgentInput: (text) => agentPanelRef.current?.setInput(text),
+        sendAgentMessage: () => agentPanelRef.current?.send(),
+      }));
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [user, completedTours, activeTour]);
+
+  const handleTourComplete = useCallback(() => {
+    if (activeTour) {
+      fetch("/api/tours", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tourKey: activeTour.key }),
+      });
+      setCompletedTours((prev) => [...prev, activeTour.key]);
+    }
+    setActiveTour(null);
+  }, [activeTour]);
+
+  const handleTourSkip = useCallback(() => {
+    handleTourComplete(); // Mark as completed even on skip
+  }, [handleTourComplete]);
 
   // Fetch current user
   useEffect(() => {
@@ -139,6 +183,11 @@ export default function Home() {
 
   return (
     <div className="min-h-screen" style={{ background: "var(--bg, #FAF9F6)" }}>
+      {/* Feature Tour */}
+      {activeTour && (
+        <TourEngine tour={activeTour} onComplete={handleTourComplete} onSkip={handleTourSkip} />
+      )}
+
       {/* Header */}
       <header className="bg-white/80 backdrop-blur-md border-b border-warm-200 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
@@ -160,6 +209,7 @@ export default function Home() {
                 .map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
+                  data-tour={`tab-${id}`}
                   onClick={() => setTab(id)}
                   className={`flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold rounded-full mx-0.5 transition-all ${
                     tab === id
@@ -220,6 +270,24 @@ export default function Home() {
                             <div className="border-t border-slate-100 my-1" />
                           </>
                         )}
+                        <button
+                          onClick={() => {
+                            setShowAdminDropdown(false);
+                            // Reset tour so it shows again
+                            fetch("/api/tours", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tourKey: "video-guides-v1" }) });
+                            setCompletedTours((prev) => prev.filter((k) => k !== "video-guides-v1"));
+                            setActiveTour(createVideoGuidesTour({
+                              setTab: (t) => setTab(t as Tab),
+                              setKbSubTab: (s) => setKbSubTab(s as KBSubTab),
+                              setAgentInput: (text) => agentPanelRef.current?.setInput(text),
+                              sendAgentMessage: () => agentPanelRef.current?.send(),
+                            }));
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[var(--text-secondary)] hover:bg-mint-50 hover:text-mint-700 transition-colors"
+                        >
+                          <Sparkles size={13} className="text-[var(--mint)]" />What&apos;s new?
+                        </button>
+                        <div className="border-t border-slate-100 my-1" />
                         <button
                           onClick={() => { setShowAdminDropdown(false); handleLogout(); }}
                           className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-red-600 hover:bg-red-50 transition-colors"
@@ -329,6 +397,7 @@ export default function Home() {
                     {(["qa", "articles", "refs", "videos"] as const).map((st) => (
                       <button
                         key={st}
+                        data-tour={`subtab-${st}`}
                         onClick={() => setKbSubTab(st)}
                         className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                           kbSubTab === st
@@ -417,7 +486,7 @@ export default function Home() {
                     ))}
                   </div>
                 </div>
-                {agentSubTab === "chat" ? <AgentPanel user={user} /> : <BehavioralCardsPanel />}
+                {agentSubTab === "chat" ? <AgentPanel ref={agentPanelRef} user={user} /> : <BehavioralCardsPanel />}
               </div>
             )}
 

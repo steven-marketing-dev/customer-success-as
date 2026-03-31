@@ -226,6 +226,7 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
         {buttons.map(({ mode, label, desc, icon: Icon, color }) => (
           <button
             key={mode}
+            data-tour={`btn-${mode}`}
             onClick={() => run(mode)}
             disabled={status === "running"}
             className={`flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm ${color}`}

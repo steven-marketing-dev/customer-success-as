@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, FormEvent, useCallback } from "react";
+import { useState, useRef, useEffect, FormEvent, useCallback, useImperativeHandle, forwardRef } from "react";
 import { Send, Bot, User, Loader2, BookOpen, AlertCircle, Globe, Tag, Flag, Check, Sparkles, Plus, MessageSquare, Trash2, Star, ChevronLeft, ChevronRight, Users } from "lucide-react";
 import { type QAItem } from "./QACard";
 
@@ -185,6 +185,11 @@ export interface AuthUser {
   username: string;
   display_name: string | null;
   role: "master" | "user";
+}
+
+export interface AgentPanelHandle {
+  setInput: (text: string) => void;
+  send: () => void;
 }
 
 const PALETTE = [
@@ -577,7 +582,7 @@ function CorrectionFlow({ msgIndex, message, corrections, onCorrectionsChange, u
 
 // ─── Main Panel ──────────────────────────────────────────────────────────
 
-export function AgentPanel({ user }: { user: AuthUser | null }) {
+export const AgentPanel = forwardRef<AgentPanelHandle, { user: AuthUser | null }>(function AgentPanel({ user }, ref) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -761,6 +766,11 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
     }
   };
 
+  useImperativeHandle(ref, () => ({
+    setInput: (text: string) => setInput(text),
+    send: () => send(),
+  }), [send]);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   };
@@ -843,7 +853,7 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
       {/* Chat area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto space-y-6 px-4 pb-4">
+        <div data-tour="agent-messages" className="flex-1 overflow-y-auto space-y-6 px-4 pb-4">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center text-slate-400 gap-3">
               <div className="w-14 h-14 rounded-2xl bg-mint-50 flex items-center justify-center">
@@ -1002,7 +1012,7 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
         </div>
 
         {/* Input */}
-        <form onSubmit={send} className="mx-4 mt-3 flex items-end rounded-xl border border-slate-200 bg-white shadow-sm focus-within:ring-2 focus-within:ring-mint-500 focus-within:border-transparent transition">
+        <form data-tour="agent-input" onSubmit={send} className="mx-4 mt-3 flex items-end rounded-xl border border-slate-200 bg-white shadow-sm focus-within:ring-2 focus-within:ring-mint-500 focus-within:border-transparent transition">
           <textarea
             ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
             placeholder="Ask a question about your customers..." rows={1} disabled={loading}
@@ -1019,4 +1029,4 @@ export function AgentPanel({ user }: { user: AuthUser | null }) {
       </div>
     </div>
   );
-}
+});

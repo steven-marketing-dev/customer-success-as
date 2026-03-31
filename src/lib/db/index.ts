@@ -175,6 +175,13 @@ export interface ProcessCard {
   updated_at: number | null;
 }
 
+export interface TourCompletion {
+  id: number;
+  user_id: number;
+  tour_key: string;
+  completed_at: number;
+}
+
 // Singleton DB connection
 
 declare global {
@@ -400,6 +407,14 @@ function initDb(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_message_ratings_message ON message_ratings(message_id);
     CREATE INDEX IF NOT EXISTS idx_message_ratings_rating ON message_ratings(rating);
+
+    CREATE TABLE IF NOT EXISTS tour_completions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      tour_key TEXT NOT NULL,
+      completed_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(user_id, tour_key)
+    );
   `);
 
   // Migrations: add columns if they don't exist yet

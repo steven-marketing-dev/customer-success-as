@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import crypto from "crypto";
-import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard } from "./index";
+import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion } from "./index";
 
 export class Repository {
   private db: Database.Database;
@@ -1286,5 +1286,33 @@ export class Repository {
       JOIN term_process_card_map m ON m.term_id = t.id
       WHERE m.process_card_id = ?
     `).all(cardId) as Term[];
+  }
+
+  // ─── Tour Completions ─────────────────────────────────────────────────────
+
+  getCompletedTours(userId: number): string[] {
+    const rows = this.db.prepare(
+      "SELECT tour_key FROM tour_completions WHERE user_id = ?"
+    ).all(userId) as Array<{ tour_key: string }>;
+    return rows.map((r) => r.tour_key);
+  }
+
+  completeTour(userId: number, tourKey: string): void {
+    this.db.prepare(
+      "INSERT OR IGNORE INTO tour_completions (user_id, tour_key) VALUES (?, ?)"
+    ).run(userId, tourKey);
+  }
+
+  hasCompletedTour(userId: number, tourKey: string): boolean {
+    const row = this.db.prepare(
+      "SELECT 1 FROM tour_completions WHERE user_id = ? AND tour_key = ?"
+    ).get(userId, tourKey);
+    return !!row;
+  }
+
+  resetTour(userId: number, tourKey: string): void {
+    this.db.prepare(
+      "DELETE FROM tour_completions WHERE user_id = ? AND tour_key = ?"
+    ).run(userId, tourKey);
   }
 }
