@@ -11,11 +11,47 @@ export async function POST(req: NextRequest) {
   const session = requireAuth(req);
   const userId = session?.userId ?? 0;
 
-  const { question, history = [], conversationId: incomingConvId } = await req.json() as {
-    question: string;
-    history: ChatMessage[];
-    conversationId?: number | null;
-  };
+  // Parse body — supports both JSON and FormData (for PDF uploads)
+  let question: string;
+  let history: ChatMessage[] = [];
+  let incomingConvId: number | null = null;
+  let pdfText: string | null = null;
+
+  const contentType = req.headers.get("content-type") ?? "";
+
+  if (contentType.includes("multipart/form-data")) {
+    const formData = await req.formData();
+    question = (formData.get("question") as string) ?? "";
+    const historyRaw = formData.get("history") as string | null;
+    if (historyRaw) try { history = JSON.parse(historyRaw); } catch { /* */ }
+    const convIdRaw = formData.get("conversationId") as string | null;
+    if (convIdRaw) incomingConvId = parseInt(convIdRaw, 10) || null;
+
+    const file = formData.get("pdf") as File | null;
+    if (file) {
+      if (file.size > 10 * 1024 * 1024) {
+        return new Response("PDF too large (max 10MB)", { status: 413 });
+      }
+      const buffer = Buffer.from(await file.arrayBuffer());
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const pdfParse = require("pdf-parse");
+        const parsed = await pdfParse(buffer);
+        pdfText = parsed.text;
+      } catch {
+        return new Response("Could not parse PDF. The file may be encrypted, malformed, or not a valid PDF.", { status: 400 });
+      }
+    }
+  } else {
+    const body = await req.json() as {
+      question: string;
+      history?: ChatMessage[];
+      conversationId?: number | null;
+    };
+    question = body.question;
+    history = body.history ?? [];
+    incomingConvId = body.conversationId ?? null;
+  }
 
   if (!question?.trim()) {
     return new Response("Missing question", { status: 400 });
@@ -51,6 +87,16 @@ export async function POST(req: NextRequest) {
       reportFailed = true;
     }
   }
+
+  // Build PDF report context (takes priority over URL-based fetch)
+  let pdfReportContext = "";
+  if (pdfText) {
+    pdfReportContext = pdfText.length > 4000
+      ? pdfText.slice(0, 4000) + "\n[...truncated]"
+      : pdfText;
+  }
+
+  const hasAssessmentData = !!reportContext || !!pdfReportContext;
 
   // Retrieve relevant Q&A pairs using keyword scoring (not exact LIKE match)
   const results = repo.searchByKeywords(question, 8);
@@ -91,11 +137,11 @@ export async function POST(req: NextRequest) {
   // Boost limit + add assessment terms when a report URL is detected
   let refDocSections: Awaited<ReturnType<typeof repo.searchRefDocSections>> = [];
   try {
-    const refLimit = detectedReportUrl ? 10 : 6;
+    const refLimit = hasAssessmentData || detectedReportUrl ? 10 : 6;
     refDocSections = repo.searchRefDocSections(question, refLimit);
 
-    // When a report URL is present, also search for assessment methodology context
-    if (detectedReportUrl) {
+    // When assessment data is present, also search for assessment methodology context
+    if (hasAssessmentData || detectedReportUrl) {
       const assessmentBoost = repo.searchRefDocSections(
         "overall recommendation scoring trait assessment methodology interpretation results",
         6
@@ -247,12 +293,15 @@ ${reportContext}
 
 ASSESSMENT REPORT ANALYSIS INSTRUCTIONS:
 The user shared an assessment report. Cross-reference the scores above against the REFERENCE DOCUMENTS which contain official scoring methodology and trait definitions. Explain HOW trait scores map to the overall recommendation — some traits are weighted more heavily or have "red flag" thresholds that trigger a poor recommendation regardless of average scores. Cite actual scores from the report and methodology from ref docs when explaining.` : ""}
-${reportFailed && detectedReportUrl ? `
-NOTE: The user referenced an assessment report (${detectedReportUrl}) but the system could not automatically extract the data from the report page. Ask the user to copy and paste the key information from the report so you can analyze it. Guide them on what to share:
-- Overall recommendation and score
-- Individual trait/dimension scores (name + score + rating)
-- Any specific sections they have questions about
-Once they paste the data, use the REFERENCE DOCUMENTS to explain the scoring methodology and how individual scores contribute to the overall recommendation.` : ""}
+${reportFailed && detectedReportUrl && !pdfReportContext ? `
+NOTE: The user referenced an assessment report (${detectedReportUrl}) but the system could not automatically extract the data from the report page. Ask the user to upload the PDF version of the report using the paperclip button, or paste the key information.` : ""}
+${pdfReportContext ? `
+--- ASSESSMENT REPORT DATA (extracted from uploaded PDF) ---
+${pdfReportContext}
+--- END ASSESSMENT REPORT DATA ---
+
+ASSESSMENT REPORT ANALYSIS INSTRUCTIONS:
+The user uploaded a PDF assessment report. Cross-reference the scores above against the REFERENCE DOCUMENTS which contain official scoring methodology and trait definitions. Explain HOW trait scores map to the overall recommendation — some traits are weighted more heavily or have "red flag" thresholds. Cite actual scores from the report and methodology from ref docs when explaining.` : ""}
 ${articlesContext ? `
 --- DOCUMENTATION (${articles.length} public KB article${articles.length !== 1 ? "s" : ""} — you MUST link at least one below your answer) ---
 ${articlesContext}

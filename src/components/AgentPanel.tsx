@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, FormEvent, useCallback, useImperativeHandle, forwardRef } from "react";
-import { Send, Bot, User, Loader2, BookOpen, AlertCircle, Globe, Tag, Flag, Check, Sparkles, Plus, MessageSquare, Trash2, Star, ChevronLeft, ChevronRight, Users } from "lucide-react";
+import { Send, Bot, User, Loader2, BookOpen, AlertCircle, Globe, Tag, Flag, Check, Sparkles, Plus, MessageSquare, Trash2, Star, ChevronLeft, ChevronRight, Users, Paperclip } from "lucide-react";
 import { type QAItem } from "./QACard";
 
 /** Lightweight markdown→HTML. No headings (h1-h6), just inline formatting + lists + code blocks. */
@@ -591,8 +591,10 @@ export const AgentPanel = forwardRef<AgentPanelHandle, { user: AuthUser | null }
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarFilter, setSidebarFilter] = useState<"mine" | "all">("mine");
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadConversations = useCallback(async () => {
     try {
@@ -626,6 +628,7 @@ export const AgentPanel = forwardRef<AgentPanelHandle, { user: AuthUser | null }
       const data = await res.json();
       setConversationId(convId);
       setCorrections({});
+      setPdfFile(null);
 
       const loaded: Message[] = data.messages.map((m: { id: number; role: "user" | "assistant"; content: string; sources_json: string | null }) => {
         const msg: Message = { role: m.role, content: m.content, messageId: m.id };
@@ -653,6 +656,7 @@ export const AgentPanel = forwardRef<AgentPanelHandle, { user: AuthUser | null }
     setConversationId(null);
     setMessages([]);
     setCorrections({});
+    setPdfFile(null);
     inputRef.current?.focus();
   };
 
@@ -680,20 +684,34 @@ export const AgentPanel = forwardRef<AgentPanelHandle, { user: AuthUser | null }
     if (!question || loading) return;
 
     setInput("");
+    if (inputRef.current) inputRef.current.style.height = "auto";
+    const attachedPdf = pdfFile;
+    setPdfFile(null);
     setLoading(true);
 
-    const userMessage: Message = { role: "user", content: question };
+    const displayContent = attachedPdf ? `${question}\n📎 ${attachedPdf.name}` : question;
+    const userMessage: Message = { role: "user", content: displayContent };
     setMessages((prev) => [...prev, userMessage]);
     setMessages((prev) => [...prev, { role: "assistant", content: "", streaming: true }]);
 
     const history = messages.map((m) => ({ role: m.role, content: m.content }));
 
     try {
-      const res = await fetch("/api/agent/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, history, conversationId }),
-      });
+      let res: Response;
+      if (attachedPdf) {
+        const formData = new FormData();
+        formData.append("question", question);
+        formData.append("history", JSON.stringify(history));
+        if (conversationId) formData.append("conversationId", String(conversationId));
+        formData.append("pdf", attachedPdf);
+        res = await fetch("/api/agent/chat", { method: "POST", body: formData });
+      } else {
+        res = await fetch("/api/agent/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question, history, conversationId }),
+        });
+      }
 
       if (!res.ok || !res.body) throw new Error("Failed to connect to agent");
 
@@ -1011,12 +1029,36 @@ export const AgentPanel = forwardRef<AgentPanelHandle, { user: AuthUser | null }
           <div ref={bottomRef} />
         </div>
 
+        {/* Attached file indicator */}
+        {pdfFile && (
+          <div className="mx-4 mt-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-mint-50 border border-mint-200 text-xs text-mint-700">
+            <Paperclip size={11} />
+            <span className="truncate flex-1">{pdfFile.name}</span>
+            <button onClick={() => setPdfFile(null)} className="text-mint-400 hover:text-red-500 font-bold">&times;</button>
+          </div>
+        )}
+
         {/* Input */}
         <form data-tour="agent-input" onSubmit={send} className="mx-4 mt-3 flex items-end rounded-xl border border-slate-200 bg-white shadow-sm focus-within:ring-2 focus-within:ring-mint-500 focus-within:border-transparent transition">
+          {/* Hidden file input */}
+          <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file && file.size <= 10 * 1024 * 1024) { setPdfFile(file); }
+              else if (file) { alert("Please select a PDF file under 10MB."); }
+              e.target.value = "";
+            }}
+          />
+          {/* Attach button */}
+          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={loading}
+            className="flex-shrink-0 m-1.5 w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 flex items-center justify-center transition-all disabled:opacity-40"
+            title="Attach PDF assessment report">
+            <Paperclip size={14} />
+          </button>
           <textarea
             ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
             placeholder="Ask a question about your customers..." rows={1} disabled={loading}
-            className="flex-1 resize-none pl-4 pr-2 py-2.5 bg-transparent text-sm text-slate-900 placeholder-slate-400 focus:outline-none disabled:opacity-50"
+            className="flex-1 resize-none pr-2 py-2.5 bg-transparent text-sm text-slate-900 placeholder-slate-400 focus:outline-none disabled:opacity-50"
             style={{ maxHeight: "120px", overflowY: "auto" }}
             onInput={(e) => { const t = e.currentTarget; t.style.height = "auto"; t.style.height = `${Math.min(t.scrollHeight, 120)}px`; }}
           />
