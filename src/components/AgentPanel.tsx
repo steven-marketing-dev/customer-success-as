@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, FormEvent, useCallback, useImperativeHandle, forwardRef } from "react";
-import { Send, Bot, User, Loader2, BookOpen, AlertCircle, Globe, Tag, Flag, Check, Sparkles, Plus, MessageSquare, Trash2, Star, ChevronLeft, ChevronRight, Users, Paperclip } from "lucide-react";
+import { Send, Bot, User, Loader2, BookOpen, AlertCircle, Globe, Tag, Flag, Check, Sparkles, Plus, MessageSquare, Trash2, Star, ChevronLeft, ChevronRight, ChevronDown, Users, Paperclip, Mail, CheckCircle, XCircle } from "lucide-react";
 import { type QAItem } from "./QACard";
 
 /** Lightweight markdown→HTML. No headings (h1-h6), just inline formatting + lists + code blocks. */
@@ -184,6 +184,9 @@ export interface AuthUser {
   id: number;
   username: string;
   display_name: string | null;
+  calendly_url: string | null;
+  gmail_connected: boolean;
+  gmail_email: string | null;
   role: "master" | "user";
 }
 
@@ -246,7 +249,7 @@ function StarRating({ messageId, initialRating }: { messageId: number | null | u
   const fillColors = ["", "fill-red-400 text-red-400", "fill-amber-400 text-amber-400", "fill-emerald-400 text-emerald-400"];
 
   return (
-    <div className="w-full">
+    <div>
       <div className="flex items-center gap-0.5">
         {[1, 2, 3].map((v) => {
           const active = (hovered ?? rating ?? 0) >= v;
@@ -298,6 +301,75 @@ function StarRating({ messageId, initialRating }: { messageId: number | null | u
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function EmailDraftButton({ messageId }: { messageId: number | null | undefined }) {
+  const [state, setState] = useState<"idle" | "loading" | "success" | "error" | "not-connected">("idle");
+
+  if (!messageId) return null;
+
+  const handleGenerateEmail = async () => {
+    setState("loading");
+    try {
+      const res = await fetch("/api/agent/email-draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageId }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        if (data.error === "gmail_not_connected" || data.error === "gmail_reauth_required") {
+          setState("not-connected");
+          setTimeout(() => setState("idle"), 4000);
+          return;
+        }
+        throw new Error(data.error || "Failed");
+      }
+      setState("success");
+      setTimeout(() => setState("idle"), 5000);
+    } catch {
+      setState("error");
+      setTimeout(() => setState("idle"), 3000);
+    }
+  };
+
+  if (state === "idle") {
+    return (
+      <button onClick={handleGenerateEmail} className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 transition-colors">
+        <Mail size={11} /><span>Create Email Draft</span>
+      </button>
+    );
+  }
+
+  if (state === "loading") {
+    return (
+      <div className="flex items-center gap-1 text-[11px] text-slate-400">
+        <Loader2 size={11} className="animate-spin" /><span>Creating...</span>
+      </div>
+    );
+  }
+
+  if (state === "success") {
+    return (
+      <div className="flex items-center gap-1 text-[11px] text-emerald-600">
+        <CheckCircle size={11} /><span>Draft created</span>
+      </div>
+    );
+  }
+
+  if (state === "error") {
+    return (
+      <div className="flex items-center gap-1 text-[11px] text-red-500">
+        <XCircle size={11} /><span>Failed</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1 text-[11px] text-amber-600">
+      <AlertCircle size={11} /><span>Connect Gmail first</span>
     </div>
   );
 }
@@ -592,6 +664,7 @@ export const AgentPanel = forwardRef<AgentPanelHandle, { user: AuthUser | null }
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarFilter, setSidebarFilter] = useState<"mine" | "all">("mine");
   const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [expandedRefs, setExpandedRefs] = useState<Record<number, boolean>>({});
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -918,102 +991,150 @@ export const AgentPanel = forwardRef<AgentPanelHandle, { user: AuthUser | null }
                     {msg.streaming && msg.content && <span className="inline-block w-0.5 h-4 bg-mint-400 animate-pulse ml-0.5 align-middle" />}
                   </div>
 
-                  {/* Star rating */}
-                  {!msg.streaming && msg.role === "assistant" && msg.content && !msg.content.startsWith("Error:") && !msg.content.startsWith("Connection error:") && (
-                    <StarRating messageId={msg.messageId} initialRating={msg.rating} />
-                  )}
+                  {/* Action bar: Stars | References toggle | Actions menu */}
+                  {!msg.streaming && msg.role === "assistant" && msg.content && !msg.content.startsWith("Error:") && !msg.content.startsWith("Connection error:") && (() => {
+                    const refCount = (msg.sources?.length ?? 0) + (msg.articles?.length ?? 0) + (msg.terms?.length ?? 0) + (msg.refSections?.length ?? 0) + (msg.videos?.length ?? 0);
+                    const refsExpanded = expandedRefs[i] ?? false;
 
-                  {/* Sources */}
-                  {!msg.streaming && msg.sources && msg.sources.length > 0 && (
-                    <div className="w-full">
-                      <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
-                        <BookOpen size={11} /><span>{msg.sources.length} Q&A source{msg.sources.length !== 1 ? "s" : ""}</span>
-                      </div>
-                      <div className="grid grid-cols-1 gap-2">
-                        {msg.sources.map((qa) => <SourceCard key={qa.id} qa={qa} />)}
-                      </div>
-                    </div>
-                  )}
+                    return (
+                      <div className="w-full space-y-2">
+                        {/* Compact action bar */}
+                        <div className="flex items-center gap-3">
+                          <StarRating messageId={msg.messageId} initialRating={msg.rating} />
 
-                  {/* Articles */}
-                  {!msg.streaming && msg.articles && msg.articles.length > 0 && (
-                    <div className="w-full">
-                      <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
-                        <Globe size={11} /><span>{msg.articles.length} article{msg.articles.length !== 1 ? "s" : ""}</span>
-                      </div>
-                      <div className="grid grid-cols-1 gap-1.5">
-                        {msg.articles.map((a) => (
-                          <div key={a.id} className="bg-white border border-slate-200 rounded-lg overflow-hidden text-xs">
-                            <a href={a.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-3 py-2 hover:bg-cyan-50 transition-colors">
-                              <Globe size={12} className="text-cyan-500 flex-shrink-0" />
-                              <span className="text-slate-800 font-medium truncate">{a.title}</span>
-                              {a.category && <span className="ml-auto px-1.5 py-0.5 rounded-full bg-cyan-100 text-cyan-700 font-medium flex-shrink-0">{a.category}</span>}
-                            </a>
-                            {a.excerpt && (
-                              <div className="px-3 py-2 border-t border-slate-100 bg-slate-50">
-                                <p className="text-slate-600 leading-relaxed border-l-2 border-cyan-200 pl-2 italic">{a.excerpt}</p>
+                          {/* References toggle */}
+                          {refCount > 0 ? (
+                            <button
+                              onClick={() => setExpandedRefs((prev) => ({ ...prev, [i]: !prev[i] }))}
+                              className="flex items-center gap-1.5 text-slate-400 hover:text-slate-600 transition-colors"
+                            >
+                              <BookOpen size={11} />
+                              <span className="text-[11px]">{refCount} ref{refCount !== 1 ? "s" : ""}</span>
+                              <ChevronDown size={10} className={`transition-transform ${refsExpanded ? "rotate-180" : ""}`} />
+                            </button>
+                          ) : (
+                            <div className="flex items-center gap-1 text-[11px] text-amber-500">
+                              <AlertCircle size={11} /><span>No refs</span>
+                            </div>
+                          )}
+
+                          {/* Inline actions */}
+                          <div className="flex items-center gap-2 ml-auto">
+                            <EmailDraftButton messageId={msg.messageId} />
+                            {(() => {
+                              const corrData = corrections[i];
+                              const wasCorrected = corrData && (corrData.state === "applied" || corrData.appliedCount > 0);
+                              return (
+                                <button
+                                  onClick={() => {
+                                    handleCorrectionChange(i, { ...(corrData ?? { state: "idle" as const, feedback: "", preview: [], behavioralSuggestion: null, appliedCount: 0, priorCorrections: {} }), state: "writing" });
+                                  }}
+                                  className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-amber-600 transition-colors"
+                                >
+                                  <Flag size={11} />
+                                  <span>{wasCorrected ? "Re-correct" : "Correct"}</span>
+                                  {wasCorrected && <Check size={9} className="text-emerald-500" />}
+                                </button>
+                              );
+                            })()}
+                          </div>
+                        </div>
+
+                        {/* Collapsible references panel */}
+                        {refsExpanded && (
+                          <div className="space-y-3 pt-1 border-t border-slate-100">
+                            {/* Sources */}
+                            {msg.sources && msg.sources.length > 0 && (
+                              <div className="w-full">
+                                <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
+                                  <BookOpen size={11} /><span>{msg.sources.length} Q&A source{msg.sources.length !== 1 ? "s" : ""}</span>
+                                </div>
+                                <div className="grid grid-cols-1 gap-2">
+                                  {msg.sources.map((qa) => <SourceCard key={qa.id} qa={qa} />)}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Articles */}
+                            {msg.articles && msg.articles.length > 0 && (
+                              <div className="w-full">
+                                <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
+                                  <Globe size={11} /><span>{msg.articles.length} article{msg.articles.length !== 1 ? "s" : ""}</span>
+                                </div>
+                                <div className="grid grid-cols-1 gap-1.5">
+                                  {msg.articles.map((a) => (
+                                    <div key={a.id} className="bg-white border border-slate-200 rounded-lg overflow-hidden text-xs">
+                                      <a href={a.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-3 py-2 hover:bg-cyan-50 transition-colors">
+                                        <Globe size={12} className="text-cyan-500 flex-shrink-0" />
+                                        <span className="text-slate-800 font-medium truncate">{a.title}</span>
+                                        {a.category && <span className="ml-auto px-1.5 py-0.5 rounded-full bg-cyan-100 text-cyan-700 font-medium flex-shrink-0">{a.category}</span>}
+                                      </a>
+                                      {a.excerpt && (
+                                        <div className="px-3 py-2 border-t border-slate-100 bg-slate-50">
+                                          <p className="text-slate-600 leading-relaxed border-l-2 border-cyan-200 pl-2 italic">{a.excerpt}</p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Glossary terms */}
+                            {msg.terms && msg.terms.length > 0 && (
+                              <div className="w-full">
+                                <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400"><Tag size={11} /><span>Glossary terms</span></div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {msg.terms.map((t) => (
+                                    <span key={t.id} title={t.definition} className="px-2 py-1 rounded-full bg-violet-100 text-violet-700 text-xs font-medium cursor-default">{t.name}</span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Ref sections */}
+                            {msg.refSections && msg.refSections.length > 0 && (
+                              <div className="w-full">
+                                <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
+                                  <BookOpen size={11} /><span>{msg.refSections.length} reference section{msg.refSections.length !== 1 ? "s" : ""}</span>
+                                </div>
+                                <div className="grid grid-cols-1 gap-2">
+                                  {msg.refSections.map((r) => <RefSectionCard key={r.id} section={r} />)}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Video walkthroughs */}
+                            {msg.videos && msg.videos.length > 0 && (
+                              <div className="w-full">
+                                <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
+                                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                                  <span>{msg.videos.length} video walkthrough{msg.videos.length !== 1 ? "s" : ""}</span>
+                                </div>
+                                <div className="grid grid-cols-1 gap-1.5">
+                                  {msg.videos.map((v) => (
+                                    <a key={v.id} href={v.loom_url} target="_blank" rel="noopener noreferrer"
+                                      className="flex items-start gap-2 p-2.5 rounded-lg border border-slate-100 bg-slate-50/50 hover:bg-mint-50/50 hover:border-mint-200 transition-colors text-xs group">
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0 mt-0.5 text-slate-400 group-hover:text-mint-500">
+                                        <polygon points="5 3 19 12 5 21 5 3"/>
+                                      </svg>
+                                      <div className="min-w-0">
+                                        <p className="font-medium text-slate-700 group-hover:text-mint-700 truncate">{v.title}</p>
+                                        <p className="text-slate-400 line-clamp-1 mt-0.5">{v.summary}</p>
+                                      </div>
+                                    </a>
+                                  ))}
+                                </div>
                               </div>
                             )}
                           </div>
-                        ))}
+                        )}
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
 
-                  {/* Glossary terms */}
-                  {!msg.streaming && msg.terms && msg.terms.length > 0 && (
-                    <div className="w-full">
-                      <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400"><Tag size={11} /><span>Glossary terms</span></div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {msg.terms.map((t) => (
-                          <span key={t.id} title={t.definition} className="px-2 py-1 rounded-full bg-violet-100 text-violet-700 text-xs font-medium cursor-default">{t.name}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Ref sections */}
-                  {!msg.streaming && msg.refSections && msg.refSections.length > 0 && (
-                    <div className="w-full">
-                      <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
-                        <BookOpen size={11} /><span>{msg.refSections.length} reference section{msg.refSections.length !== 1 ? "s" : ""}</span>
-                      </div>
-                      <div className="grid grid-cols-1 gap-2">
-                        {msg.refSections.map((r) => <RefSectionCard key={r.id} section={r} />)}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Video walkthroughs */}
-                  {!msg.streaming && msg.videos && msg.videos.length > 0 && (
-                    <div className="w-full">
-                      <div className="flex items-center gap-1.5 mb-2 text-xs text-slate-400">
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-                        <span>{msg.videos.length} video walkthrough{msg.videos.length !== 1 ? "s" : ""}</span>
-                      </div>
-                      <div className="grid grid-cols-1 gap-1.5">
-                        {msg.videos.map((v) => (
-                          <a key={v.id} href={v.loom_url} target="_blank" rel="noopener noreferrer"
-                            className="flex items-start gap-2 p-2.5 rounded-lg border border-slate-100 bg-slate-50/50 hover:bg-mint-50/50 hover:border-mint-200 transition-colors text-xs group">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0 mt-0.5 text-slate-400 group-hover:text-mint-500">
-                              <polygon points="5 3 19 12 5 21 5 3"/>
-                            </svg>
-                            <div className="min-w-0">
-                              <p className="font-medium text-slate-700 group-hover:text-mint-700 truncate">{v.title}</p>
-                              <p className="text-slate-400 line-clamp-1 mt-0.5">{v.summary}</p>
-                            </div>
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {!msg.streaming && (!msg.sources || msg.sources.length === 0) && (!msg.articles || msg.articles.length === 0) && (!msg.refSections || msg.refSections.length === 0) && (!msg.videos || msg.videos.length === 0) && msg.role === "assistant" && msg.content && (
-                    <div className="flex items-center gap-1.5 text-xs text-amber-500"><AlertCircle size={11} /><span>No matching entries found</span></div>
-                  )}
-
-                  {/* Correction flow */}
-                  {!msg.streaming && msg.role === "assistant" && msg.content && (
+                  {/* Correction flow (renders inline when triggered from actions menu) */}
+                  {!msg.streaming && msg.role === "assistant" && msg.content && corrections[i]?.state && corrections[i].state !== "idle" && (
                     <CorrectionFlow msgIndex={i} message={msg} corrections={corrections} onCorrectionsChange={handleCorrectionChange} userQuestion={getUserQuestion(i)} />
                   )}
                 </div>

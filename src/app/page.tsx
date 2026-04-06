@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { LayoutDashboard, BookOpen, Zap, RefreshCw, Trash2, MessageCircle, BookA, LogOut, UserPlus, Users, X, ChevronDown, Star, ClipboardList, AlertCircle, Sparkles } from "lucide-react";
+import { LayoutDashboard, BookOpen, Zap, RefreshCw, Trash2, MessageCircle, BookA, LogOut, UserPlus, Users, X, ChevronDown, Star, ClipboardList, AlertCircle, Sparkles, Settings, Mail, Link2 } from "lucide-react";
 import { StatsGrid } from "@/components/StatsGrid";
 import { CategoryGrid, type CategorySummary } from "@/components/CategoryGrid";
 import { SearchPanel } from "@/components/SearchPanel";
@@ -56,6 +56,12 @@ export default function Home() {
   const [newDisplayName, setNewDisplayName] = useState("");
   const [showAdminDropdown, setShowAdminDropdown] = useState(false);
   const [showRatingsHistory, setShowRatingsHistory] = useState(false);
+  const [showProfileSettings, setShowProfileSettings] = useState(false);
+  const [profileCalendlyUrl, setProfileCalendlyUrl] = useState("");
+  const [profileDisplayName, setProfileDisplayName] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [gmailConnecting, setGmailConnecting] = useState(false);
   const [ratedMessages, setRatedMessages] = useState<Array<{
     id: number; content: string; rating: number; feedback: string | null;
     username: string; rated_at: number; conversation_id: number;
@@ -116,7 +122,64 @@ export default function Home() {
         setUser(data.user);
       }
     }).catch(() => {});
+
+    // Check for Gmail OAuth callback results
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("gmailConnected") === "true" || params.get("gmailError")) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, []);
+
+  const saveProfile = async () => {
+    setProfileSaving(true);
+    setProfileError(null);
+    try {
+      const res = await fetch("/api/auth/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          calendly_url: profileCalendlyUrl.trim() || null,
+          display_name: profileDisplayName.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setProfileError(data.error || "Failed to save");
+        return;
+      }
+      const data = await res.json();
+      setUser((prev) => prev ? { ...prev, ...data.user } : prev);
+      setShowProfileSettings(false);
+    } catch {
+      setProfileError("Network error");
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const connectGmail = async () => {
+    setGmailConnecting(true);
+    try {
+      const res = await fetch("/api/auth/gmail");
+      if (!res.ok) {
+        const data = await res.json();
+        setProfileError(data.error || "Failed to start Gmail connection");
+        return;
+      }
+      const data = await res.json();
+      window.location.href = data.authUrl;
+    } catch {
+      setProfileError("Failed to connect Gmail");
+      setGmailConnecting(false);
+    }
+  };
+
+  const disconnectGmail = async () => {
+    try {
+      await fetch("/api/auth/gmail/status", { method: "DELETE" });
+      setUser((prev) => prev ? { ...prev, gmail_connected: false, gmail_email: null } : prev);
+    } catch { /* ignore */ }
+  };
 
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -253,6 +316,19 @@ export default function Home() {
                     <>
                       <div className="fixed inset-0 z-20" onClick={() => setShowAdminDropdown(false)} />
                       <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-30">
+                        <button
+                          onClick={() => {
+                            setShowAdminDropdown(false);
+                            setProfileCalendlyUrl(user.calendly_url || "");
+                            setProfileDisplayName(user.display_name || "");
+                            setProfileError(null);
+                            setShowProfileSettings(true);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 transition-colors"
+                        >
+                          <Settings size={13} className="text-slate-400" />My Profile
+                        </button>
+                        <div className="border-t border-slate-100 my-1" />
                         {user.role === "master" && (
                           <>
                             <button
@@ -739,6 +815,91 @@ export default function Home() {
                 })
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Profile Settings Modal */}
+      {showProfileSettings && user && (
+        <div className="fixed inset-0 glass-overlay flex items-center justify-center z-50" onClick={() => setShowProfileSettings(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-slate-900">My Profile</h2>
+              <button onClick={() => setShowProfileSettings(false)} className="p-1 text-slate-400 hover:text-slate-600"><X size={18} /></button>
+            </div>
+
+            {/* Display Name */}
+            <div>
+              <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Display Name</label>
+              <input
+                value={profileDisplayName}
+                onChange={(e) => setProfileDisplayName(e.target.value)}
+                placeholder="Your display name"
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-mint-400"
+              />
+            </div>
+
+            {/* Calendly URL */}
+            <div>
+              <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide flex items-center gap-1.5">
+                <Link2 size={12} />Calendly Link
+              </label>
+              <p className="text-[11px] text-slate-400 mt-0.5 mb-1">
+                Your personal scheduling link. The AI agent will include this when suggesting meetings.
+              </p>
+              <input
+                value={profileCalendlyUrl}
+                onChange={(e) => setProfileCalendlyUrl(e.target.value)}
+                placeholder="https://calendly.com/your-name"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-mint-400"
+              />
+            </div>
+
+            {/* Gmail Connection */}
+            <div>
+              <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide flex items-center gap-1.5">
+                <Mail size={12} />Gmail Connection
+              </label>
+              <p className="text-[11px] text-slate-400 mt-0.5 mb-1.5">
+                Connect your Gmail to create email drafts from agent responses.
+              </p>
+              {user.gmail_connected ? (
+                <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/50 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-emerald-400" />
+                    <span className="text-xs text-emerald-700 font-medium">{user.gmail_email || "Connected"}</span>
+                  </div>
+                  <button
+                    onClick={disconnectGmail}
+                    className="text-[11px] text-red-500 hover:text-red-700 font-medium"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={connectGmail}
+                  disabled={gmailConnecting}
+                  className="w-full flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50"
+                >
+                  {gmailConnecting ? (
+                    <><RefreshCw size={14} className="animate-spin" />Connecting...</>
+                  ) : (
+                    <><Mail size={14} />Connect Gmail</>
+                  )}
+                </button>
+              )}
+            </div>
+
+            {profileError && <p className="text-xs text-red-500">{profileError}</p>}
+
+            <button
+              onClick={saveProfile}
+              disabled={profileSaving}
+              className="w-full rounded-lg bg-mint-600 px-3 py-2 text-sm font-medium text-white hover:bg-mint-700 transition-colors disabled:opacity-50"
+            >
+              {profileSaving ? "Saving..." : "Save"}
+            </button>
           </div>
         </div>
       )}

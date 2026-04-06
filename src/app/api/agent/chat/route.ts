@@ -59,6 +59,9 @@ export async function POST(req: NextRequest) {
 
   const repo = new Repository(getDb());
 
+  // Fetch current user for Calendly link injection
+  const currentUser = userId > 0 ? repo.getUserById(userId) : null;
+
   // Persist: create or reuse conversation, save user message
   let conversationId = incomingConvId ?? null;
   if (userId > 0) {
@@ -278,6 +281,12 @@ Follow these rules when formulating your response. Category rules apply only whe
 ${rules.join("\n")}
 --- END BEHAVIORAL RULES ---` : "";
 })()}
+${currentUser?.calendly_url ? `
+--- SCHEDULING ---
+The current support agent's name is "${currentUser.display_name || currentUser.username}" and their Calendly scheduling link is: ${currentUser.calendly_url}
+When you suggest a meeting, call, or follow-up with the customer, include this link using the format: [Schedule a call](${currentUser.calendly_url})
+Do NOT fabricate or modify this URL. Only include it when a meeting or call is genuinely relevant to the answer.
+--- END SCHEDULING ---` : ""}
 ${glossaryContext ? `
 --- GLOSSARY ---
 ${glossaryContext}

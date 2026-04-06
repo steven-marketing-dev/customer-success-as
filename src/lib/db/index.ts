@@ -130,8 +130,20 @@ export interface User {
   username: string;
   password_hash: string;
   display_name: string | null;
+  calendly_url: string | null;
   role: "master" | "user";
   created_at: number;
+}
+
+export interface GmailToken {
+  id: number;
+  user_id: number;
+  access_token_encrypted: string;
+  refresh_token_encrypted: string;
+  token_expiry: number | null;
+  gmail_email: string | null;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface Conversation {
@@ -415,12 +427,25 @@ function initDb(db: Database.Database) {
       completed_at INTEGER NOT NULL DEFAULT (unixepoch()),
       UNIQUE(user_id, tour_key)
     );
+
+    CREATE TABLE IF NOT EXISTS gmail_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      access_token_encrypted TEXT NOT NULL,
+      refresh_token_encrypted TEXT NOT NULL,
+      token_expiry INTEGER,
+      gmail_email TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_gmail_tokens_user ON gmail_tokens(user_id);
   `);
 
   // Migrations: add columns if they don't exist yet
   const migrations = [
     "ALTER TABLE qa_pairs ADD COLUMN resolution_steps TEXT",
     "ALTER TABLE qa_pairs ADD COLUMN updated_at INTEGER",
+    "ALTER TABLE users ADD COLUMN calendly_url TEXT",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }

@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import crypto from "crypto";
-import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion } from "./index";
+import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion, type GmailToken } from "./index";
 
 export class Repository {
   private db: Database.Database;
@@ -996,6 +996,49 @@ export class Repository {
     return this.db.prepare("SELECT * FROM users ORDER BY created_at ASC").all() as User[];
   }
 
+  updateUserProfile(id: number, data: { calendly_url?: string | null; display_name?: string | null }): User | undefined {
+    const fields: string[] = [];
+    const values: (string | null | number)[] = [];
+
+    if (data.calendly_url !== undefined) {
+      fields.push("calendly_url = ?");
+      values.push(data.calendly_url);
+    }
+    if (data.display_name !== undefined) {
+      fields.push("display_name = ?");
+      values.push(data.display_name);
+    }
+
+    if (fields.length === 0) return this.getUserById(id);
+
+    values.push(id);
+    this.db.prepare(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+    return this.getUserById(id);
+  }
+
+  // ─── Gmail Tokens ─────────────────────────────────────────────────────────
+
+  saveGmailTokens(userId: number, data: { access_token_encrypted: string; refresh_token_encrypted: string; token_expiry: number | null; gmail_email: string | null }): void {
+    this.db.prepare(`
+      INSERT INTO gmail_tokens (user_id, access_token_encrypted, refresh_token_encrypted, token_expiry, gmail_email)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        access_token_encrypted = excluded.access_token_encrypted,
+        refresh_token_encrypted = excluded.refresh_token_encrypted,
+        token_expiry = excluded.token_expiry,
+        gmail_email = excluded.gmail_email,
+        updated_at = unixepoch()
+    `).run(userId, data.access_token_encrypted, data.refresh_token_encrypted, data.token_expiry, data.gmail_email);
+  }
+
+  getGmailTokens(userId: number): GmailToken | undefined {
+    return this.db.prepare("SELECT * FROM gmail_tokens WHERE user_id = ?").get(userId) as GmailToken | undefined;
+  }
+
+  deleteGmailTokens(userId: number): void {
+    this.db.prepare("DELETE FROM gmail_tokens WHERE user_id = ?").run(userId);
+  }
+
   // ─── Conversations ────────────────────────────────────────────────────────
 
   createConversation(userId: number, title?: string): Conversation {
@@ -1055,6 +1098,20 @@ export class Repository {
     return this.db.prepare(
       "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC"
     ).all(conversationId) as ChatMessage[];
+  }
+
+  getMessageById(id: number): ChatMessage | undefined {
+    return this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as ChatMessage | undefined;
+  }
+
+  /** Get the user message immediately preceding an assistant message in the same conversation.
+   *  Uses rowid (id) ordering instead of created_at to avoid ambiguity when multiple messages share the same second. */
+  getPrecedingUserMessage(assistantMessageId: number): ChatMessage | undefined {
+    const msg = this.getMessageById(assistantMessageId);
+    if (!msg || msg.role !== "assistant") return undefined;
+    return this.db.prepare(
+      "SELECT * FROM messages WHERE conversation_id = ? AND role = 'user' AND id < ? ORDER BY id DESC LIMIT 1"
+    ).get(msg.conversation_id, msg.id) as ChatMessage | undefined;
   }
 
   // ─── Message Ratings ──────────────────────────────────────────────────────
