@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { LayoutDashboard, BookOpen, Zap, RefreshCw, Trash2, MessageCircle, BookA, LogOut, UserPlus, Users, X, ChevronDown, Star, ClipboardList, AlertCircle, Sparkles, Settings, Mail, Link2 } from "lucide-react";
+import { LayoutDashboard, BookOpen, Zap, RefreshCw, Trash2, MessageCircle, BookA, LogOut, UserPlus, Users, X, ChevronDown, Star, ClipboardList, AlertCircle, Sparkles, Settings, Mail, Link2, Paperclip } from "lucide-react";
 import { StatsGrid } from "@/components/StatsGrid";
 import { CategoryGrid, type CategorySummary } from "@/components/CategoryGrid";
 import { SearchPanel } from "@/components/SearchPanel";
@@ -12,8 +12,6 @@ import { ArticlesPanel } from "@/components/ArticlesPanel";
 import { BehavioralCardsPanel } from "@/components/BehavioralCardsPanel";
 import { RefDocsPanel } from "@/components/RefDocsPanel";
 import VideoGuidesPanel from "@/components/VideoGuidesPanel";
-import TourEngine from "@/components/TourEngine";
-import { createVideoGuidesTour } from "@/lib/tours";
 import { QACard, type QAItem } from "@/components/QACard";
 
 type Tab = "dashboard" | "kb" | "pipeline" | "agent" | "glossary";
@@ -62,6 +60,7 @@ export default function Home() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [gmailConnecting, setGmailConnecting] = useState(false);
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
   const [ratedMessages, setRatedMessages] = useState<Array<{
     id: number; content: string; rating: number; feedback: string | null;
     username: string; rated_at: number; conversation_id: number;
@@ -75,8 +74,7 @@ export default function Home() {
   // Agent panel ref (for tour)
   const agentPanelRef = useRef<AgentPanelHandle>(null);
 
-  // Tour state
-  const [activeTour, setActiveTour] = useState<ReturnType<typeof createVideoGuidesTour> | null>(null);
+  // Tour / "What's new" state
   const [completedTours, setCompletedTours] = useState<string[]>([]);
 
   // Load completed tours on mount
@@ -84,35 +82,12 @@ export default function Home() {
     fetch("/api/tours").then((r) => r.json()).then((d) => setCompletedTours(d.completed ?? [])).catch(() => {});
   }, []);
 
-  // Auto-show video guides tour for users who haven't seen it
+  // Auto-show "What's new" modal for users who haven't seen it
   useEffect(() => {
-    if (!user || completedTours.includes("video-guides-v1") || activeTour) return;
-    const t = setTimeout(() => {
-      setActiveTour(createVideoGuidesTour({
-        setTab: (t) => setTab(t as Tab),
-        setKbSubTab: (s) => setKbSubTab(s as KBSubTab),
-        setAgentInput: (text) => agentPanelRef.current?.setInput(text),
-        sendAgentMessage: () => agentPanelRef.current?.send(),
-      }));
-    }, 1500);
+    if (!user || completedTours.includes("whats-new-v2")) return;
+    const t = setTimeout(() => setShowWhatsNew(true), 1500);
     return () => clearTimeout(t);
-  }, [user, completedTours, activeTour]);
-
-  const handleTourComplete = useCallback(() => {
-    if (activeTour) {
-      fetch("/api/tours", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tourKey: activeTour.key }),
-      });
-      setCompletedTours((prev) => [...prev, activeTour.key]);
-    }
-    setActiveTour(null);
-  }, [activeTour]);
-
-  const handleTourSkip = useCallback(() => {
-    handleTourComplete(); // Mark as completed even on skip
-  }, [handleTourComplete]);
+  }, [user, completedTours]);
 
   // Fetch current user
   useEffect(() => {
@@ -246,10 +221,6 @@ export default function Home() {
 
   return (
     <div className="min-h-screen" style={{ background: "var(--bg, #FAF9F6)" }}>
-      {/* Feature Tour */}
-      {activeTour && (
-        <TourEngine tour={activeTour} onComplete={handleTourComplete} onSkip={handleTourSkip} />
-      )}
 
       {/* Header */}
       <header className="bg-white/80 backdrop-blur-md border-b border-warm-200 sticky top-0 z-10">
@@ -349,15 +320,7 @@ export default function Home() {
                         <button
                           onClick={() => {
                             setShowAdminDropdown(false);
-                            // Reset tour so it shows again
-                            fetch("/api/tours", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tourKey: "video-guides-v1" }) });
-                            setCompletedTours((prev) => prev.filter((k) => k !== "video-guides-v1"));
-                            setActiveTour(createVideoGuidesTour({
-                              setTab: (t) => setTab(t as Tab),
-                              setKbSubTab: (s) => setKbSubTab(s as KBSubTab),
-                              setAgentInput: (text) => agentPanelRef.current?.setInput(text),
-                              sendAgentMessage: () => agentPanelRef.current?.send(),
-                            }));
+                            setShowWhatsNew(true);
                           }}
                           className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[var(--text-secondary)] hover:bg-mint-50 hover:text-mint-700 transition-colors"
                         >
@@ -900,6 +863,97 @@ export default function Home() {
             >
               {profileSaving ? "Saving..." : "Save"}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* What's New Modal */}
+      {showWhatsNew && (
+        <div className="fixed inset-0 glass-overlay flex items-center justify-center z-50" onClick={() => {
+          setShowWhatsNew(false);
+          if (!completedTours.includes("whats-new-v2")) {
+            fetch("/api/tours", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tourKey: "whats-new-v2" }) });
+            setCompletedTours((prev) => [...prev, "whats-new-v2"]);
+          }
+        }}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="px-6 pt-6 pb-4 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl mint-gradient flex items-center justify-center" style={{ boxShadow: "0 4px 14px rgba(51, 178, 156, 0.25)" }}>
+                <Sparkles size={18} className="text-white" />
+              </div>
+              <div>
+                <h2 className="font-display text-lg font-bold text-slate-900">What&apos;s New</h2>
+                <p className="text-xs text-slate-400">Latest updates to your workspace</p>
+              </div>
+              <button onClick={() => {
+                setShowWhatsNew(false);
+                if (!completedTours.includes("whats-new-v2")) {
+                  fetch("/api/tours", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tourKey: "whats-new-v2" }) });
+                  setCompletedTours((prev) => [...prev, "whats-new-v2"]);
+                }
+              }} className="ml-auto p-1 text-slate-400 hover:text-slate-600"><X size={18} /></button>
+            </div>
+
+            {/* Features */}
+            <div className="px-6 pb-6 space-y-4">
+              {/* Calendly + Email Drafts */}
+              <div className="flex gap-3 p-3 rounded-xl bg-mint-50/50 border border-mint-100">
+                <div className="w-8 h-8 rounded-lg bg-mint-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <Mail size={16} className="text-mint-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-800">Calendly + Email Drafts</h3>
+                  <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                    Set your Calendly link in <strong>My Profile</strong> and the agent will include it when suggesting meetings.
+                    Connect your Gmail to generate email drafts directly from any agent response.
+                  </p>
+                </div>
+              </div>
+
+              {/* Cleaner response layout */}
+              <div className="flex gap-3 p-3 rounded-xl bg-violet-50/50 border border-violet-100">
+                <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <BookOpen size={16} className="text-violet-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-800">Cleaner Response Layout</h3>
+                  <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                    References are now collapsed by default behind a count badge. Stars, refs, email, and correction actions all sit on one compact bar.
+                  </p>
+                </div>
+              </div>
+
+              {/* PDF Upload */}
+              <div className="flex gap-3 p-3 rounded-xl bg-amber-50/50 border border-amber-100">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <Paperclip size={16} className="text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-800">PDF Upload in Agent Chat</h3>
+                  <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                    Attach PDF reports directly to your questions using the paperclip button. The agent will extract and analyze the content alongside your knowledge base.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100">
+              <button
+                onClick={() => {
+                  setShowWhatsNew(false);
+                  if (!completedTours.includes("whats-new-v2")) {
+                    fetch("/api/tours", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tourKey: "whats-new-v2" }) });
+                    setCompletedTours((prev) => [...prev, "whats-new-v2"]);
+                  }
+                }}
+                className="w-full px-4 py-2.5 text-sm font-bold text-white rounded-xl mint-gradient hover:opacity-90 transition-opacity"
+                style={{ boxShadow: "0 4px 14px rgba(51, 178, 156, 0.25)" }}
+              >
+                Got it
+              </button>
+            </div>
           </div>
         </div>
       )}
