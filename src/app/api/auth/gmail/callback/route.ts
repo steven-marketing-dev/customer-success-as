@@ -10,7 +10,9 @@ export async function GET(req: NextRequest) {
   const stateRaw = req.nextUrl.searchParams.get("state");
   const error = req.nextUrl.searchParams.get("error");
 
-  const baseUrl = req.nextUrl.origin;
+  // Derive public base URL from the redirect URI (req.nextUrl.origin returns internal address behind proxies)
+  const redirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI ?? "";
+  const baseUrl = redirectUri ? new URL(redirectUri).origin : req.nextUrl.origin;
 
   if (error) {
     return NextResponse.redirect(new URL(`/?gmailError=${encodeURIComponent(error)}`, baseUrl));
