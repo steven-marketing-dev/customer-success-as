@@ -19,8 +19,8 @@ Rules:
 - Include the resolution steps or answer from the agent response
 - Use "Hi," as the greeting
 - Do NOT include any sign-off, signature, or sender name at the end
-${calendlyUrl ? `- Include a line near the end: "If you'd like to discuss this further, feel free to <a href="${calendlyUrl}">schedule a call</a>."` : ""}
-${hasArticles ? `- IMPORTANT: Include a "Helpful Resources" section at the end of the body with the provided KB articles as clickable links. Format as: <p><strong>Helpful Resources:</strong></p><ul> with <li><a href="URL">Title</a></li> for each article.` : ""}
+${hasArticles ? `- Include a "Helpful Resources" section near the end of the body with the provided KB articles as clickable links. Format as: <p><strong>Helpful Resources:</strong></p><ul> with <li><a href="URL">Title</a></li> for each article.` : ""}
+${calendlyUrl ? `- AFTER the articles (if any), include as the very last line: "If you'd like to discuss this further, feel free to <a href="${calendlyUrl}">schedule a call</a>."` : ""}
 - Format the body as HTML with proper paragraphs (<p> tags), lists (<ul>/<ol>) where appropriate
 - Do NOT include any citation lines (SOURCES, REFS, ARTICLES, VIDEOS) from the original response
 - Respond with JSON only: { "subject": "...", "body": "..." }`;
