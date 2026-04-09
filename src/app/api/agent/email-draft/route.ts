@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { Repository } from "@/lib/db/repository";
 import { requireAuth } from "@/lib/auth";
-import { getValidAccessToken, createGmailDraft } from "@/lib/gmail/client";
 import { generateEmailDraft } from "@/lib/ai/emailDraftGenerator";
 
 export async function POST(req: NextRequest) {
@@ -38,41 +37,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  // Get valid Gmail access token
-  const tokenResult = await getValidAccessToken(session.userId);
-  if (!tokenResult) {
-    return NextResponse.json({ error: "gmail_not_connected" }, { status: 400 });
+  // Extract cited articles from the assistant message's sources_json
+  let articles: Array<{ title: string; url: string }> = [];
+  if (assistantMsg.sources_json) {
+    try {
+      const parsed = JSON.parse(assistantMsg.sources_json);
+      articles = (parsed.articles ?? [])
+        .filter((a: { title?: string; url?: string }) => a.title && a.url)
+        .map((a: { title: string; url: string }) => ({ title: a.title, url: a.url }));
+    } catch { /* ignore parse errors */ }
   }
 
   try {
-    // Generate email draft content via AI
     const { subject, body } = await generateEmailDraft({
       agentAnswer: assistantMsg.content,
       userQuestion,
       senderName: user.display_name || user.username,
       calendlyUrl: user.calendly_url,
+      articles,
     });
 
-    // Create draft in Gmail
-    const { draftId } = await createGmailDraft(
-      tokenResult.accessToken,
-      subject,
-      body,
-      tokenResult.email ?? ""
-    );
-
-    return NextResponse.json({ success: true, draftId, subject });
+    return NextResponse.json({ subject, body });
   } catch (err) {
     console.error("[email-draft] Error:", err);
-
-    // Check if it's a Gmail auth error
-    const message = err instanceof Error ? err.message : "";
-    if (message.includes("invalid_grant") || message.includes("Token has been expired")) {
-      // Token was revoked — clean up
-      repo.deleteGmailTokens(session.userId);
-      return NextResponse.json({ error: "gmail_reauth_required" }, { status: 401 });
-    }
-
-    return NextResponse.json({ error: "Failed to create email draft" }, { status: 500 });
+    return NextResponse.json({ error: "Failed to generate email draft" }, { status: 500 });
   }
 }

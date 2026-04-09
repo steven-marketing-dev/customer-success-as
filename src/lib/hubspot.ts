@@ -391,6 +391,225 @@ export class HubSpotClient {
     };
   }
 
+  // ─── Conversations Inbox ──────────────────────────────────────────────
+
+  async searchConversationThreads(query?: string): Promise<Array<{
+    threadId: string;
+    subject: string | null;
+    latestMessage: string | null;
+    contactName: string | null;
+    contactEmail: string | null;
+    updatedAt: string | null;
+    channelId: string | null;
+    channelAccountId: string | null;
+  }>> {
+    try {
+      type ThreadResult = {
+        id: string;
+        createdAt?: string;
+        latestMessageTimestamp?: string;
+        assignedTo?: string;
+        associatedContactId?: string;
+        originalChannelId?: string;
+        originalChannelAccountId?: string;
+        inboxId?: string;
+        status?: string;
+      };
+
+      // Fetch threads sorted by latest activity (ascending), limited to last 90 days
+      const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000;
+      const openThreads: ThreadResult[] = [];
+      let after: string | null = null;
+      const maxPages = 3;
+
+      for (let page = 0; page < maxPages; page++) {
+        const params = new URLSearchParams({
+          limit: "500",
+          sort: "latestMessageTimestamp",
+          latestMessageTimestampAfter: String(ninetyDaysAgo),
+        });
+        if (after) params.set("after", after);
+
+        const res = await fetch(
+          `https://api.hubapi.com/conversations/v3/conversations/threads?${params}`,
+          { headers: { Authorization: `Bearer ${this.accessToken}` } }
+        );
+        if (!res.ok) {
+          console.error("[hubspot] Thread search failed:", res.status, await res.text());
+          break;
+        }
+
+        const data = await res.json() as {
+          results?: ThreadResult[];
+          paging?: { next?: { after?: string } };
+        };
+
+        for (const t of data.results ?? []) {
+          if (t.status === "OPEN") openThreads.push(t);
+        }
+
+        after = data.paging?.next?.after ?? null;
+        if (!after) break;
+      }
+
+      // Sort by most recent activity first (API returns ascending)
+      const threads = openThreads.sort((a, b) =>
+        new Date(b.latestMessageTimestamp ?? 0).getTime() - new Date(a.latestMessageTimestamp ?? 0).getTime()
+      ).slice(0, 25);
+
+      // Batch-fetch contact details for all threads that have associatedContactId
+      const contactIds = [...new Set(threads.map((t) => t.associatedContactId).filter(Boolean))] as string[];
+      const contactMap = new Map<string, { name: string | null; email: string | null }>();
+
+      // Fetch contacts in parallel (batches of 10 to avoid rate limits)
+      for (let i = 0; i < contactIds.length; i += 10) {
+        const batch = contactIds.slice(i, i + 10);
+        await Promise.all(
+          batch.map(async (contactId) => {
+            try {
+              const contactRes = await fetch(
+                `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}?properties=email,firstname,lastname`,
+                { headers: { Authorization: `Bearer ${this.accessToken}` } }
+              );
+              if (contactRes.ok) {
+                const contact = await contactRes.json() as { properties?: { email?: string; firstname?: string; lastname?: string } };
+                const p = contact.properties;
+                contactMap.set(contactId, {
+                  email: p?.email ?? null,
+                  name: [p?.firstname, p?.lastname].filter(Boolean).join(" ") || null,
+                });
+              }
+            } catch { /* skip */ }
+          })
+        );
+      }
+
+      // Batch-fetch first message per thread for subject/preview (batches of 10)
+      const messageMap = new Map<string, { subject: string | null; text: string | null }>();
+      for (let i = 0; i < threads.length; i += 10) {
+        const batch = threads.slice(i, i + 10);
+        await Promise.all(
+          batch.map(async (t) => {
+            try {
+              const msgRes = await fetch(
+                `https://api.hubapi.com/conversations/v3/conversations/threads/${t.id}/messages?limit=1`,
+                { headers: { Authorization: `Bearer ${this.accessToken}` } }
+              );
+              if (msgRes.ok) {
+                const msgData = await msgRes.json() as { results?: Array<{ subject?: string; text?: string }> };
+                const msg = msgData.results?.[0];
+                messageMap.set(t.id, {
+                  subject: msg?.subject ?? null,
+                  text: msg?.text?.slice(0, 200) ?? null,
+                });
+              }
+            } catch { /* skip */ }
+          })
+        );
+      }
+
+      const results = threads.map((t) => {
+        const contact = t.associatedContactId ? contactMap.get(t.associatedContactId) : undefined;
+        const msg = messageMap.get(t.id);
+        return {
+          threadId: t.id,
+          subject: msg?.subject ?? null,
+          latestMessage: msg?.text ?? null,
+          contactName: contact?.name ?? null,
+          contactEmail: contact?.email ?? null,
+          updatedAt: t.latestMessageTimestamp ?? null,
+          channelId: t.originalChannelId ?? null,
+          channelAccountId: t.originalChannelAccountId ?? null,
+        };
+      });
+
+      // Client-side filter if query provided
+      if (query?.trim()) {
+        const q = query.toLowerCase();
+        return results.filter((r) =>
+          (r.subject?.toLowerCase().includes(q)) ||
+          (r.contactName?.toLowerCase().includes(q)) ||
+          (r.contactEmail?.toLowerCase().includes(q)) ||
+          (r.latestMessage?.toLowerCase().includes(q))
+        );
+      }
+
+      return results;
+    } catch (err) {
+      console.error("[hubspot] Thread search error:", err);
+      return [];
+    }
+  }
+
+  /** Resolve the actor ID (A-{userId}) for the first HubSpot owner. */
+  private async getSenderActorId(): Promise<string> {
+    const res = await fetch(
+      `https://api.hubapi.com/crm/v3/owners?limit=1`,
+      { headers: { Authorization: `Bearer ${this.accessToken}` } }
+    );
+    if (res.ok) {
+      const data = await res.json() as { results?: Array<{ userId?: number }> };
+      const userId = data.results?.[0]?.userId;
+      if (userId) return `A-${userId}`;
+    }
+    throw new Error("Could not determine HubSpot sender — no owners found");
+  }
+
+  async replyToThread(threadId: string, opts: {
+    html: string;
+    subject?: string;
+    plainText?: string;
+    channelId: string;
+    channelAccountId: string;
+    contactEmail?: string;
+    contactName?: string;
+  }): Promise<{ messageId: string }> {
+    const senderActorId = await this.getSenderActorId();
+
+    // Strip HTML tags for plain text fallback
+    const plainText = opts.plainText ?? opts.html.replace(/<[^>]*>/g, "").trim();
+
+    // Build recipients for email channels
+    const recipients = opts.contactEmail
+      ? [{
+          recipientField: "TO",
+          deliveryIdentifiers: [{
+            type: "HS_EMAIL_ADDRESS",
+            value: opts.contactEmail,
+          }],
+        }]
+      : undefined;
+
+    const res = await fetch(
+      `https://api.hubapi.com/conversations/v3/conversations/threads/${threadId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "MESSAGE",
+          senderActorId,
+          text: plainText,
+          richText: opts.html,
+          subject: opts.subject,
+          channelId: opts.channelId,
+          channelAccountId: opts.channelAccountId,
+          ...(recipients && { recipients }),
+        }),
+      }
+    );
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`HubSpot reply failed (${res.status}): ${errorText}`);
+    }
+
+    const data = await res.json() as { id?: string };
+    return { messageId: data.id ?? "" };
+  }
+
   static parseHubSpotDate(value: string | null | undefined): number | null {
     if (!value) return null;
     try {

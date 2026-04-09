@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useRef, useEffect, FormEvent, useCallback, useImperativeHandle, forwardRef } from "react";
-import { Send, Bot, User, Loader2, BookOpen, AlertCircle, Globe, Tag, Flag, Check, Sparkles, Plus, MessageSquare, Trash2, Star, ChevronLeft, ChevronRight, ChevronDown, Users, Paperclip, Mail, CheckCircle, XCircle } from "lucide-react";
+import { Send, Bot, User, Loader2, BookOpen, AlertCircle, Globe, Tag, Flag, Check, Sparkles, Plus, MessageSquare, Trash2, Star, ChevronLeft, ChevronRight, ChevronDown, Users, Paperclip, Mail } from "lucide-react";
 import { type QAItem } from "./QACard";
+import EmailDraftModal from "./EmailDraftModal";
 
 /** Lightweight markdown→HTML. No headings (h1-h6), just inline formatting + lists + code blocks. */
 function renderMarkdown(text: string): string {
@@ -306,71 +307,17 @@ function StarRating({ messageId, initialRating }: { messageId: number | null | u
 }
 
 function EmailDraftButton({ messageId }: { messageId: number | null | undefined }) {
-  const [state, setState] = useState<"idle" | "loading" | "success" | "error" | "not-connected">("idle");
+  const [showModal, setShowModal] = useState(false);
 
   if (!messageId) return null;
 
-  const handleGenerateEmail = async () => {
-    setState("loading");
-    try {
-      const res = await fetch("/api/agent/email-draft", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messageId }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        if (data.error === "gmail_not_connected" || data.error === "gmail_reauth_required") {
-          setState("not-connected");
-          setTimeout(() => setState("idle"), 4000);
-          return;
-        }
-        throw new Error(data.error || "Failed");
-      }
-      setState("success");
-      setTimeout(() => setState("idle"), 5000);
-    } catch {
-      setState("error");
-      setTimeout(() => setState("idle"), 3000);
-    }
-  };
-
-  if (state === "idle") {
-    return (
-      <button onClick={handleGenerateEmail} className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 transition-colors">
-        <Mail size={11} /><span>Create Email Draft</span>
-      </button>
-    );
-  }
-
-  if (state === "loading") {
-    return (
-      <div className="flex items-center gap-1 text-[11px] text-slate-400">
-        <Loader2 size={11} className="animate-spin" /><span>Creating...</span>
-      </div>
-    );
-  }
-
-  if (state === "success") {
-    return (
-      <div className="flex items-center gap-1 text-[11px] text-emerald-600">
-        <CheckCircle size={11} /><span>Draft created</span>
-      </div>
-    );
-  }
-
-  if (state === "error") {
-    return (
-      <div className="flex items-center gap-1 text-[11px] text-red-500">
-        <XCircle size={11} /><span>Failed</span>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex items-center gap-1 text-[11px] text-amber-600">
-      <AlertCircle size={11} /><span>Connect Gmail first</span>
-    </div>
+    <>
+      <button onClick={() => setShowModal(true)} className="flex items-center gap-1 rounded-md bg-mint-50 border border-mint-200 px-2 py-0.5 text-[11px] font-medium text-mint-700 hover:bg-mint-100 transition-colors">
+        <Mail size={11} /><span>Email</span>
+      </button>
+      {showModal && <EmailDraftModal messageId={messageId} onClose={() => setShowModal(false)} />}
+    </>
   );
 }
 
