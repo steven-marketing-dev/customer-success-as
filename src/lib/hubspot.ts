@@ -484,23 +484,30 @@ export class HubSpotClient {
         );
       }
 
-      // Batch-fetch first message per thread for subject/preview (batches of 10)
-      const messageMap = new Map<string, { subject: string | null; text: string | null }>();
+      // Batch-fetch first message per thread for subject/preview + sender fallback (batches of 10)
+      const messageMap = new Map<string, { subject: string | null; text: string | null; senderName: string | null; senderEmail: string | null }>();
       for (let i = 0; i < threads.length; i += 10) {
         const batch = threads.slice(i, i + 10);
         await Promise.all(
           batch.map(async (t) => {
             try {
               const msgRes = await fetch(
-                `https://api.hubapi.com/conversations/v3/conversations/threads/${t.id}/messages?limit=1`,
+                `https://api.hubapi.com/conversations/v3/conversations/threads/${t.id}/messages?limit=5`,
                 { headers: { Authorization: `Bearer ${this.accessToken}` } }
               );
               if (msgRes.ok) {
-                const msgData = await msgRes.json() as { results?: Array<{ subject?: string; text?: string }> };
-                const msg = msgData.results?.[0];
+                type MsgSender = { actorId?: string; name?: string; deliveryIdentifier?: { type?: string; value?: string } };
+                const msgData = await msgRes.json() as { results?: Array<{ subject?: string; text?: string; type?: string; senders?: MsgSender[] }> };
+                const messages = msgData.results ?? [];
+                // Find the first actual MESSAGE (not status change) for subject/text
+                const firstMsg = messages.find((m) => m.type === "MESSAGE");
+                // Find the first non-agent sender for contact fallback
+                const customerSender = messages.flatMap((m) => m.senders ?? []).find((s) => s.actorId && !s.actorId.startsWith("A-") && !s.actorId.startsWith("S-"));
                 messageMap.set(t.id, {
-                  subject: msg?.subject ?? null,
-                  text: msg?.text?.slice(0, 200) ?? null,
+                  subject: firstMsg?.subject ?? null,
+                  text: firstMsg?.text?.slice(0, 200) ?? null,
+                  senderName: customerSender?.name ?? null,
+                  senderEmail: customerSender?.deliveryIdentifier?.type === "HS_EMAIL_ADDRESS" ? customerSender.deliveryIdentifier.value ?? null : null,
                 });
               }
             } catch { /* skip */ }
@@ -515,8 +522,8 @@ export class HubSpotClient {
           threadId: t.id,
           subject: msg?.subject ?? null,
           latestMessage: msg?.text ?? null,
-          contactName: contact?.name ?? null,
-          contactEmail: contact?.email ?? null,
+          contactName: contact?.name ?? msg?.senderName ?? null,
+          contactEmail: contact?.email ?? msg?.senderEmail ?? null,
           updatedAt: t.latestMessageTimestamp ?? null,
           channelId: t.originalChannelId ?? null,
           channelAccountId: t.originalChannelAccountId ?? null,
