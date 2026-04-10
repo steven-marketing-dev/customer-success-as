@@ -44,6 +44,8 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
 
   const bodyRef = useRef<HTMLDivElement>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const threadPickerRef = useRef<HTMLDivElement>(null);
+  const sendButtonRef = useRef<HTMLButtonElement>(null);
 
   // Generate initial draft on mount
   useEffect(() => {
@@ -135,6 +137,7 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
       if (res.ok) {
         const data = await res.json();
         setHubspotThreads(data.threads ?? []);
+        setTimeout(() => threadPickerRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 50);
       }
     } catch { /* ignore */ }
     setHubspotSearching(false);
@@ -153,6 +156,13 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
       searchThreads("");
     }
   }, [destination, searchThreads]);
+
+  // Scroll to send button when a contact is selected
+  useEffect(() => {
+    if (selectedThread) {
+      setTimeout(() => sendButtonRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 50);
+    }
+  }, [selectedThread]);
 
   // HubSpot reply
   const handleHubspotReply = async () => {
@@ -272,7 +282,7 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
 
               {/* HubSpot thread picker */}
               {(destination === "hubspot-selecting" || destination === "hubspot-sending") && (
-                <div className="border border-orange-200 rounded-lg bg-orange-50/30 p-3 space-y-2">
+                <div ref={threadPickerRef} className="border border-orange-200 rounded-lg bg-orange-50/30 p-3 space-y-2">
                   <div className="flex items-center gap-2">
                     <Search size={13} className="text-orange-500" />
                     <span className="text-xs font-semibold text-orange-700">Select a conversation thread</span>
@@ -321,6 +331,7 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
                   </div>
                   {selectedThread && (
                     <button
+                      ref={sendButtonRef}
                       onClick={handleHubspotReply}
                       disabled={destination === "hubspot-sending"}
                       className="w-full flex items-center justify-center gap-2 rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-white hover:bg-orange-600 disabled:opacity-50 transition-colors"
@@ -350,9 +361,11 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
               onClick={() => setDestination((d) => d === "hubspot-selecting" ? "idle" : "hubspot-selecting")}
               disabled={destination === "gmail-saving" || destination === "hubspot-sending"}
               className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold transition-colors disabled:opacity-40 ${
-                destination === "hubspot-selecting" || destination === "hubspot-sending"
+                (destination === "hubspot-selecting" || destination === "hubspot-sending") && !selectedThread
                   ? "bg-orange-500 text-white hover:bg-orange-600"
-                  : "bg-mint-600 text-white hover:bg-mint-700"
+                  : destination === "hubspot-selecting" || destination === "hubspot-sending"
+                    ? "border border-orange-300 text-orange-600 bg-orange-50 hover:bg-orange-100"
+                    : "bg-mint-600 text-white hover:bg-mint-700"
               }`}
             >
               <Send size={13} />
