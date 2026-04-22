@@ -150,10 +150,11 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
     return () => { if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current); };
   }, [hubspotQuery, destination, searchThreads]);
 
-  // Load threads immediately when HubSpot panel opens
+  // Load threads immediately when HubSpot panel opens + scroll to show loading state
   useEffect(() => {
     if (destination === "hubspot-selecting") {
       searchThreads("");
+      setTimeout(() => threadPickerRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 50);
     }
   }, [destination, searchThreads]);
 

@@ -221,6 +221,13 @@ function StarRating({ messageId, initialRating }: { messageId: number | null | u
   const [feedback, setFeedback] = useState("");
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    setRating(initialRating ?? null);
+    setHovered(null);
+    setShowFeedback(false);
+    setFeedback("");
+  }, [messageId, initialRating]);
+
   if (!messageId) return null;
 
   const saveRating = async (value: number, fb?: string) => {
