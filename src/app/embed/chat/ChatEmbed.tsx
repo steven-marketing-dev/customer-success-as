@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo, FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  Send, Loader2, X, Star, ExternalLink, Bot, MessageSquare, Mail, Calendar,
+  Send, Loader2, X, Star, ExternalLink, HelpCircle, MessageSquare, Mail, Calendar,
   ChevronLeft, ChevronRight, Check,
 } from "lucide-react";
 import { renderMarkdown } from "@/lib/markdown-inline";
@@ -136,7 +136,7 @@ function WidgetHeader({ color, productName, title, canGoBack, onBack, onClose }:
           </button>
         ) : (
           <>
-            <Bot size={18} className="flex-shrink-0" />
+            <HelpCircle size={18} className="flex-shrink-0" />
             <span className="font-semibold text-sm truncate ml-1">{productName}</span>
           </>
         )}
@@ -358,7 +358,7 @@ function ChatView({ widgetKey, color, productName }: {
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 gap-2 py-8">
             <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ backgroundColor: `${color}15`, color }}>
-              <Bot size={22} />
+              <HelpCircle size={22} />
             </div>
             <p className="text-sm font-medium text-slate-600">How can I help?</p>
             <p className="text-xs">Ask me anything about {productName}.</p>
