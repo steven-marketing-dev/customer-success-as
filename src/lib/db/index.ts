@@ -194,6 +194,42 @@ export interface TourCompletion {
   completed_at: number;
 }
 
+export interface WidgetInstallation {
+  id: number;
+  key: string;
+  name: string;
+  allowed_origins: string; // JSON array of strings
+  calendly_url: string | null;
+  product_name: string | null;
+  primary_color: string | null;
+  rate_limit_per_hour: number;
+  enable_chat: number; // 0 | 1
+  enable_email: number; // 0 | 1
+  enable_calendly: number; // 0 | 1
+  is_active: number; // 0 | 1
+  created_at: number;
+  updated_at: number;
+}
+
+export interface WidgetRating {
+  id: number;
+  installation_id: number;
+  exchange_id: string;
+  rating: 1 | 2 | 3;
+  feedback: string | null;
+  question: string;
+  answer: string;
+  ip_hash: string;
+  created_at: number;
+}
+
+export interface WidgetRateEvent {
+  id: number;
+  installation_id: number;
+  ip_hash: string;
+  created_at: number;
+}
+
 // Singleton DB connection
 
 declare global {
@@ -428,6 +464,50 @@ function initDb(db: Database.Database) {
       UNIQUE(user_id, tour_key)
     );
 
+    CREATE TABLE IF NOT EXISTS widget_installations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      allowed_origins TEXT NOT NULL DEFAULT '[]',
+      calendly_url TEXT,
+      product_name TEXT,
+      primary_color TEXT,
+      rate_limit_per_hour INTEGER NOT NULL DEFAULT 60,
+      enable_chat INTEGER NOT NULL DEFAULT 1,
+      enable_email INTEGER NOT NULL DEFAULT 1,
+      enable_calendly INTEGER NOT NULL DEFAULT 1,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_widget_installations_key ON widget_installations(key);
+    CREATE INDEX IF NOT EXISTS idx_widget_installations_active ON widget_installations(is_active);
+
+    CREATE TABLE IF NOT EXISTS widget_ratings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      installation_id INTEGER NOT NULL REFERENCES widget_installations(id) ON DELETE CASCADE,
+      exchange_id TEXT NOT NULL,
+      rating INTEGER NOT NULL CHECK(rating IN (1, 2, 3)),
+      feedback TEXT,
+      question TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      ip_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(installation_id, exchange_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_widget_ratings_installation ON widget_ratings(installation_id);
+    CREATE INDEX IF NOT EXISTS idx_widget_ratings_rating ON widget_ratings(rating);
+    CREATE INDEX IF NOT EXISTS idx_widget_ratings_created ON widget_ratings(created_at);
+
+    CREATE TABLE IF NOT EXISTS widget_rate_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      installation_id INTEGER NOT NULL REFERENCES widget_installations(id) ON DELETE CASCADE,
+      ip_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_widget_rate_events_install_created ON widget_rate_events(installation_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_widget_rate_events_ip_created ON widget_rate_events(ip_hash, created_at);
+
     CREATE TABLE IF NOT EXISTS gmail_tokens (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -446,6 +526,9 @@ function initDb(db: Database.Database) {
     "ALTER TABLE qa_pairs ADD COLUMN resolution_steps TEXT",
     "ALTER TABLE qa_pairs ADD COLUMN updated_at INTEGER",
     "ALTER TABLE users ADD COLUMN calendly_url TEXT",
+    "ALTER TABLE widget_installations ADD COLUMN enable_chat INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE widget_installations ADD COLUMN enable_email INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE widget_installations ADD COLUMN enable_calendly INTEGER NOT NULL DEFAULT 1",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }

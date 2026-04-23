@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { LayoutDashboard, BookOpen, Zap, RefreshCw, Trash2, MessageCircle, BookA, LogOut, UserPlus, Users, X, ChevronDown, Star, ClipboardList, AlertCircle, Sparkles, Settings, Mail, Link2, Paperclip } from "lucide-react";
+import { LayoutDashboard, BookOpen, Zap, RefreshCw, Trash2, MessageCircle, BookA, LogOut, UserPlus, Users, X, ChevronDown, Star, ClipboardList, AlertCircle, Sparkles, Settings, Mail, Link2, Paperclip, Code2 } from "lucide-react";
 import { StatsGrid } from "@/components/StatsGrid";
 import { CategoryGrid, type CategorySummary } from "@/components/CategoryGrid";
 import { SearchPanel } from "@/components/SearchPanel";
@@ -13,6 +13,7 @@ import { BehavioralCardsPanel } from "@/components/BehavioralCardsPanel";
 import { RefDocsPanel } from "@/components/RefDocsPanel";
 import VideoGuidesPanel from "@/components/VideoGuidesPanel";
 import { QACard, type QAItem } from "@/components/QACard";
+import { WidgetInstallationsPanel } from "@/components/WidgetInstallationsPanel";
 
 type Tab = "dashboard" | "kb" | "pipeline" | "agent" | "glossary";
 type KBSubTab = "qa" | "articles" | "refs" | "videos";
@@ -54,6 +55,7 @@ export default function Home() {
   const [newDisplayName, setNewDisplayName] = useState("");
   const [showAdminDropdown, setShowAdminDropdown] = useState(false);
   const [showRatingsHistory, setShowRatingsHistory] = useState(false);
+  const [showWidgets, setShowWidgets] = useState(false);
   const [showProfileSettings, setShowProfileSettings] = useState(false);
   const [profileCalendlyUrl, setProfileCalendlyUrl] = useState("");
   const [profileDisplayName, setProfileDisplayName] = useState("");
@@ -313,6 +315,12 @@ export default function Home() {
                               className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 transition-colors"
                             >
                               <Star size={13} className="text-slate-400" />Ratings History
+                            </button>
+                            <button
+                              onClick={() => { setShowAdminDropdown(false); setShowWidgets(true); }}
+                              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 transition-colors"
+                            >
+                              <Code2 size={13} className="text-slate-400" />Widget Installations
                             </button>
                             <div className="border-t border-slate-100 my-1" />
                           </>
@@ -641,6 +649,24 @@ export default function Home() {
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Widget Installations Modal */}
+      {showWidgets && user?.role === "master" && (
+        <div className="fixed inset-0 glass-overlay flex items-center justify-center z-50 p-4" onClick={() => setShowWidgets(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+              <div className="flex items-center gap-2.5">
+                <Code2 size={18} className="text-mint-600" />
+                <h2 className="text-lg font-bold text-slate-900">Widget Installations</h2>
+              </div>
+              <button onClick={() => setShowWidgets(false)} className="p-1 text-slate-400 hover:text-slate-600"><X size={18} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              <WidgetInstallationsPanel />
             </div>
           </div>
         </div>

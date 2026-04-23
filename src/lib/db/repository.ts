@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import crypto from "crypto";
-import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion, type GmailToken } from "./index";
+import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion, type GmailToken, type WidgetInstallation, type WidgetRating } from "./index";
 
 export class Repository {
   private db: Database.Database;
@@ -1371,5 +1371,135 @@ export class Repository {
     this.db.prepare(
       "DELETE FROM tour_completions WHERE user_id = ? AND tour_key = ?"
     ).run(userId, tourKey);
+  }
+
+  // ─── Widget Installations ─────────────────────────────────────────────────
+
+  createWidgetInstallation(data: {
+    key: string;
+    name: string;
+    allowed_origins: string[];
+    calendly_url?: string | null;
+    product_name?: string | null;
+    primary_color?: string | null;
+    rate_limit_per_hour?: number;
+    enable_chat?: boolean;
+    enable_email?: boolean;
+    enable_calendly?: boolean;
+  }): WidgetInstallation {
+    const info = this.db.prepare(
+      `INSERT INTO widget_installations (key, name, allowed_origins, calendly_url, product_name, primary_color, rate_limit_per_hour, enable_chat, enable_email, enable_calendly)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      data.key,
+      data.name,
+      JSON.stringify(data.allowed_origins ?? []),
+      data.calendly_url ?? null,
+      data.product_name ?? null,
+      data.primary_color ?? null,
+      data.rate_limit_per_hour ?? 60,
+      (data.enable_chat ?? true) ? 1 : 0,
+      (data.enable_email ?? true) ? 1 : 0,
+      (data.enable_calendly ?? true) ? 1 : 0
+    );
+    return this.getWidgetInstallationById(Number(info.lastInsertRowid))!;
+  }
+
+  updateWidgetInstallation(id: number, fields: Partial<{
+    name: string;
+    allowed_origins: string[];
+    calendly_url: string | null;
+    product_name: string | null;
+    primary_color: string | null;
+    rate_limit_per_hour: number;
+    enable_chat: number;
+    enable_email: number;
+    enable_calendly: number;
+    is_active: number;
+  }>): WidgetInstallation | undefined {
+    const sets: string[] = [];
+    const vals: (string | number | null)[] = [];
+    if (fields.name !== undefined) { sets.push("name = ?"); vals.push(fields.name); }
+    if (fields.allowed_origins !== undefined) { sets.push("allowed_origins = ?"); vals.push(JSON.stringify(fields.allowed_origins)); }
+    if (fields.calendly_url !== undefined) { sets.push("calendly_url = ?"); vals.push(fields.calendly_url); }
+    if (fields.product_name !== undefined) { sets.push("product_name = ?"); vals.push(fields.product_name); }
+    if (fields.primary_color !== undefined) { sets.push("primary_color = ?"); vals.push(fields.primary_color); }
+    if (fields.rate_limit_per_hour !== undefined) { sets.push("rate_limit_per_hour = ?"); vals.push(fields.rate_limit_per_hour); }
+    if (fields.enable_chat !== undefined) { sets.push("enable_chat = ?"); vals.push(fields.enable_chat); }
+    if (fields.enable_email !== undefined) { sets.push("enable_email = ?"); vals.push(fields.enable_email); }
+    if (fields.enable_calendly !== undefined) { sets.push("enable_calendly = ?"); vals.push(fields.enable_calendly); }
+    if (fields.is_active !== undefined) { sets.push("is_active = ?"); vals.push(fields.is_active); }
+    if (sets.length === 0) return this.getWidgetInstallationById(id);
+    sets.push("updated_at = unixepoch()");
+    vals.push(id);
+    this.db.prepare(`UPDATE widget_installations SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+    return this.getWidgetInstallationById(id);
+  }
+
+  deleteWidgetInstallation(id: number): void {
+    this.db.prepare("DELETE FROM widget_installations WHERE id = ?").run(id);
+  }
+
+  getWidgetInstallationById(id: number): WidgetInstallation | undefined {
+    return this.db.prepare("SELECT * FROM widget_installations WHERE id = ?").get(id) as WidgetInstallation | undefined;
+  }
+
+  getWidgetInstallationByKey(key: string): WidgetInstallation | undefined {
+    return this.db.prepare("SELECT * FROM widget_installations WHERE key = ?").get(key) as WidgetInstallation | undefined;
+  }
+
+  listWidgetInstallations(): Array<WidgetInstallation & { rating_count: number; avg_rating: number | null }> {
+    return this.db.prepare(`
+      SELECT wi.*,
+        (SELECT COUNT(*) FROM widget_ratings WHERE installation_id = wi.id) as rating_count,
+        (SELECT AVG(rating) FROM widget_ratings WHERE installation_id = wi.id) as avg_rating
+      FROM widget_installations wi
+      ORDER BY wi.created_at DESC
+    `).all() as Array<WidgetInstallation & { rating_count: number; avg_rating: number | null }>;
+  }
+
+  // ─── Widget Ratings ────────────────────────────────────────────────────────
+
+  insertWidgetRating(data: {
+    installation_id: number;
+    exchange_id: string;
+    rating: 1 | 2 | 3;
+    feedback: string | null;
+    question: string;
+    answer: string;
+    ip_hash: string;
+  }): void {
+    this.db.prepare(`
+      INSERT INTO widget_ratings (installation_id, exchange_id, rating, feedback, question, answer, ip_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(installation_id, exchange_id) DO UPDATE SET
+        rating = excluded.rating,
+        feedback = excluded.feedback
+    `).run(data.installation_id, data.exchange_id, data.rating, data.feedback, data.question, data.answer, data.ip_hash);
+  }
+
+  getRecentWidgetRatings(installationId: number, limit = 50): WidgetRating[] {
+    return this.db.prepare(
+      "SELECT * FROM widget_ratings WHERE installation_id = ? ORDER BY created_at DESC LIMIT ?"
+    ).all(installationId, limit) as WidgetRating[];
+  }
+
+  // ─── Widget Rate Limiting (sliding-window, DB-backed) ─────────────────────
+
+  recordWidgetRateEvent(installationId: number, ipHash: string): void {
+    this.db.prepare(
+      "INSERT INTO widget_rate_events (installation_id, ip_hash) VALUES (?, ?)"
+    ).run(installationId, ipHash);
+    // Housekeeping: purge events older than 2h for this installation
+    this.db.prepare(
+      "DELETE FROM widget_rate_events WHERE installation_id = ? AND created_at < unixepoch() - 7200"
+    ).run(installationId);
+  }
+
+  countWidgetRateEventsLastHour(installationId: number, ipHash: string): number {
+    const row = this.db.prepare(
+      "SELECT COUNT(*) as n FROM widget_rate_events WHERE installation_id = ? AND ip_hash = ? AND created_at >= unixepoch() - 3600"
+    ).get(installationId, ipHash) as { n: number };
+    return row.n;
   }
 }

@@ -1,5 +1,6 @@
 import { Client } from "@hubspot/api-client";
 import { FilterOperatorEnum } from "@hubspot/api-client/lib/codegen/crm/tickets/models/Filter";
+import { AssociationSpecAssociationCategoryEnum } from "@hubspot/api-client/lib/codegen/crm/associations/v4/models/AssociationSpec";
 
 // Only sync tickets created on or after January 1, 2025
 const START_DATE_MS = new Date("2025-01-01T00:00:00Z").getTime();
@@ -626,6 +627,73 @@ export class HubSpotClient {
     } catch {
       return null;
     }
+  }
+
+  /** Create a new support ticket from a widget email form submission.
+   *  Uses the default pipeline/stage from env (HUBSPOT_TICKET_PIPELINE / HUBSPOT_TICKET_STAGE)
+   *  or HubSpot's common defaults ("0" / "1"). The submitter's email is prepended to the
+   *  ticket content so it survives even if contact association fails. */
+  async createWidgetTicket(data: {
+    subject: string;
+    description: string;
+    fromEmail: string;
+    sourceUrl?: string | null;
+    productName?: string | null;
+  }): Promise<{ id: string }> {
+    const pipeline = process.env.HUBSPOT_TICKET_PIPELINE ?? "0";
+    const pipelineStage = process.env.HUBSPOT_TICKET_STAGE ?? "1";
+
+    const meta: string[] = [];
+    meta.push(`From: ${data.fromEmail}`);
+    if (data.productName) meta.push(`Product: ${data.productName}`);
+    if (data.sourceUrl) meta.push(`Page: ${data.sourceUrl}`);
+    meta.push("Source: Help widget (anonymous)");
+
+    const content = `${meta.join("\n")}\n\n---\n\n${data.description}`;
+
+    const res = await this.client.crm.tickets.basicApi.create({
+      properties: {
+        subject: data.subject,
+        content,
+        hs_pipeline: pipeline,
+        hs_pipeline_stage: pipelineStage,
+      },
+      associations: [],
+    });
+
+    // Best-effort: associate by email via the contacts API.
+    // Fails silently — the email is already preserved in the ticket content.
+    try {
+      const ticketId = res.id;
+      const contactRes = await this.client.crm.contacts.searchApi.doSearch({
+        filterGroups: [{ filters: [{ propertyName: "email", operator: FilterOperatorEnum.Eq, value: data.fromEmail }] }],
+        properties: ["email"],
+        sorts: [],
+        limit: 1,
+        after: "",
+      });
+      let contactId: string | null = contactRes.results[0]?.id ?? null;
+
+      if (!contactId) {
+        const created = await this.client.crm.contacts.basicApi.create({
+          properties: { email: data.fromEmail },
+          associations: [],
+        });
+        contactId = created.id;
+      }
+
+      if (contactId) {
+        // Default association type "ticket_to_contact" — use the v4 associations API
+        await this.client.crm.associations.v4.basicApi.create(
+          "tickets", ticketId, "contacts", contactId,
+          [{ associationCategory: AssociationSpecAssociationCategoryEnum.HubspotDefined, associationTypeId: 16 }]
+        );
+      }
+    } catch (e) {
+      console.warn("[hubspot] widget ticket contact association failed:", e);
+    }
+
+    return { id: res.id };
   }
 
   static mapChannel(sourceType: string | null | undefined): string {
