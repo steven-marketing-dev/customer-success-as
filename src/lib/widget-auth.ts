@@ -16,6 +16,21 @@ function requestOrigin(req: NextRequest): string | null {
   return req.headers.get("origin");
 }
 
+/** The API's own public origin, as the browser sees it. Must be derived from
+ *  forwarded headers because req.url reflects the internal (container) URL when
+ *  running behind a reverse proxy (Coolify/Traefik, Vercel, etc.) and won't match
+ *  the browser's Origin header. */
+function apiPublicOrigin(req: NextRequest): string | null {
+  const hostHeader = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  if (!hostHeader) return null;
+  // forwarded headers may be comma-separated lists — take the first
+  const host = hostHeader.split(",")[0]!.trim();
+  const protoHeader = req.headers.get("x-forwarded-proto");
+  const proto = protoHeader?.split(",")[0]?.trim()
+    ?? (req.url.startsWith("https://") ? "https" : "http");
+  return `${proto}://${host}`;
+}
+
 function parseAllowedOrigins(json: string): string[] {
   try {
     const parsed = JSON.parse(json);
@@ -62,11 +77,10 @@ export function resolveInstallation(req: NextRequest): ResolvedInstallation | Re
   const allowed = parseAllowedOrigins(installation.allowed_origins);
 
   // Same-origin requests (the iframe at /embed/chat calling its own API) are always
-  // allowed — the iframe is served from our own host, so an Origin equal to the API
-  // origin is us talking to us. The parent-origin gate is enforced by CSP
+  // allowed — the iframe is served from our own host, so an Origin equal to the API's
+  // public origin is us talking to us. The parent-origin gate is enforced by CSP
   // `frame-ancestors` set on /embed/chat, which decides who can embed the iframe.
-  let apiOrigin: string | null = null;
-  try { apiOrigin = new URL(req.url).origin; } catch { /* ignore */ }
+  const apiOrigin = apiPublicOrigin(req);
 
   if (!origin) {
     // Browsers always send Origin on cross-origin POSTs. Missing Origin usually
