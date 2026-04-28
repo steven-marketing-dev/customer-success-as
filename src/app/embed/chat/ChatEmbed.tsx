@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo, FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  Send, Loader2, X, Star, ExternalLink, HelpCircle, MessageSquare, Mail, Calendar,
+  Send, Loader2, X, Star, ExternalLink, HelpCircle, MessageSquare, Mail, Calendar, BookOpen,
   ChevronLeft, ChevronRight, Check,
 } from "lucide-react";
 import { renderMarkdown } from "@/lib/markdown-inline";
@@ -28,9 +28,11 @@ interface WidgetConfig {
   productName: string | null;
   primaryColor: string | null;
   calendlyUrl: string | null;
+  knowledgeBaseUrl: string | null;
   enableChat: boolean;
   enableEmail: boolean;
   enableCalendly: boolean;
+  enableKnowledgeBase: boolean;
 }
 
 type View = "menu" | "chat" | "email";
@@ -58,12 +60,12 @@ export function ChatEmbed() {
         const cfg = await r.json() as WidgetConfig;
         setConfig(cfg);
 
-        // If only one option is enabled, skip the menu
-        const enabledCount = Number(cfg.enableChat) + Number(cfg.enableEmail) + Number(cfg.enableCalendly);
+        // If only one option is enabled, skip the menu when it's a view-bearing one (chat/email).
+        // Calendly-only or KB-only: menu still shown so the user can click them (open in new tab).
+        const enabledCount = Number(cfg.enableChat) + Number(cfg.enableEmail) + Number(cfg.enableCalendly) + Number(cfg.enableKnowledgeBase);
         if (enabledCount === 1) {
           if (cfg.enableChat) setView("chat");
           else if (cfg.enableEmail) setView("email");
-          // Calendly-only: menu still shown so the user can click it (opens new tab)
         }
       })
       .catch(() => setLoadError("Unable to load widget configuration"));
@@ -89,7 +91,7 @@ export function ChatEmbed() {
   }
 
   const canGoBack = view !== "menu" && (
-    Number(config.enableChat) + Number(config.enableEmail) + Number(config.enableCalendly) > 1
+    Number(config.enableChat) + Number(config.enableEmail) + Number(config.enableCalendly) + Number(config.enableKnowledgeBase) > 1
   );
 
   return (
@@ -108,6 +110,10 @@ export function ChatEmbed() {
           <MenuView config={config} color={color} onPick={(v) => {
             if (v === "calendly" && config.calendlyUrl) {
               window.open(config.calendlyUrl, "_blank", "noopener,noreferrer");
+              return;
+            }
+            if (v === "knowledge_base" && config.knowledgeBaseUrl) {
+              window.open(config.knowledgeBaseUrl, "_blank", "noopener,noreferrer");
               return;
             }
             setView(v as View);
@@ -154,9 +160,10 @@ function WidgetHeader({ color, productName, title, canGoBack, onBack, onClose }:
 // ─── Menu View ──────────────────────────────────────────────────────────────
 
 function MenuView({ config, color, onPick }: {
-  config: WidgetConfig; color: string; onPick: (v: "chat" | "email" | "calendly") => void;
+  config: WidgetConfig; color: string; onPick: (v: "chat" | "email" | "calendly" | "knowledge_base") => void;
 }) {
   const productName = config.productName || "Help";
+  const anyEnabled = config.enableChat || config.enableEmail || config.enableCalendly || config.enableKnowledgeBase;
   return (
     <div className="flex-1 overflow-y-auto px-4 py-5">
       <h2 className="text-lg font-semibold text-slate-800 mb-4">Hi, how can we help?</h2>
@@ -179,6 +186,16 @@ function MenuView({ config, color, onPick }: {
             onClick={() => onPick("email")}
           />
         )}
+        {config.enableKnowledgeBase && config.knowledgeBaseUrl && (
+          <MenuRow
+            color={color}
+            icon={<BookOpen size={18} />}
+            title="Knowledge Base"
+            subtitle="Browse articles and guides for self-service help."
+            external
+            onClick={() => onPick("knowledge_base")}
+          />
+        )}
         {config.enableCalendly && config.calendlyUrl && (
           <MenuRow
             color={color}
@@ -189,7 +206,7 @@ function MenuView({ config, color, onPick }: {
             onClick={() => onPick("calendly")}
           />
         )}
-        {!config.enableChat && !config.enableEmail && !config.enableCalendly && (
+        {!anyEnabled && (
           <p className="text-sm text-slate-400 text-center py-8">No support options are enabled for this widget.</p>
         )}
       </div>

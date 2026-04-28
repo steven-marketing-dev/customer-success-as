@@ -200,12 +200,14 @@ export interface WidgetInstallation {
   name: string;
   allowed_origins: string; // JSON array of strings
   calendly_url: string | null;
+  knowledge_base_url: string | null;
   product_name: string | null;
   primary_color: string | null;
   rate_limit_per_hour: number;
   enable_chat: number; // 0 | 1
   enable_email: number; // 0 | 1
   enable_calendly: number; // 0 | 1
+  enable_knowledge_base: number; // 0 | 1
   is_active: number; // 0 | 1
   created_at: number;
   updated_at: number;
@@ -470,12 +472,14 @@ function initDb(db: Database.Database) {
       name TEXT NOT NULL,
       allowed_origins TEXT NOT NULL DEFAULT '[]',
       calendly_url TEXT,
+      knowledge_base_url TEXT,
       product_name TEXT,
       primary_color TEXT,
       rate_limit_per_hour INTEGER NOT NULL DEFAULT 60,
       enable_chat INTEGER NOT NULL DEFAULT 1,
       enable_email INTEGER NOT NULL DEFAULT 1,
       enable_calendly INTEGER NOT NULL DEFAULT 1,
+      enable_knowledge_base INTEGER NOT NULL DEFAULT 1,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -529,6 +533,8 @@ function initDb(db: Database.Database) {
     "ALTER TABLE widget_installations ADD COLUMN enable_chat INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE widget_installations ADD COLUMN enable_email INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE widget_installations ADD COLUMN enable_calendly INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE widget_installations ADD COLUMN knowledge_base_url TEXT",
+    "ALTER TABLE widget_installations ADD COLUMN enable_knowledge_base INTEGER NOT NULL DEFAULT 1",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }

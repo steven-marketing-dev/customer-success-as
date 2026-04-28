@@ -29,9 +29,11 @@ export async function GET(req: NextRequest) {
     productName: installation.product_name,
     primaryColor: installation.primary_color,
     calendlyUrl: installation.calendly_url,
+    knowledgeBaseUrl: installation.knowledge_base_url,
     enableChat: !!installation.enable_chat,
     enableEmail: !!installation.enable_email,
     enableCalendly: !!installation.enable_calendly && !!installation.calendly_url,
+    enableKnowledgeBase: !!installation.enable_knowledge_base && !!installation.knowledge_base_url,
   }), {
     headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
   });

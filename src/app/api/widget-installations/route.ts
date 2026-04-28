@@ -29,12 +29,14 @@ export async function POST(req: NextRequest) {
     name?: string;
     allowed_origins?: string[];
     calendly_url?: string | null;
+    knowledge_base_url?: string | null;
     product_name?: string | null;
     primary_color?: string | null;
     rate_limit_per_hour?: number;
     enable_chat?: boolean;
     enable_email?: boolean;
     enable_calendly?: boolean;
+    enable_knowledge_base?: boolean;
   };
 
   const name = (body.name ?? "").trim();
@@ -50,12 +52,14 @@ export async function POST(req: NextRequest) {
     name,
     allowed_origins: origins,
     calendly_url: body.calendly_url ?? null,
+    knowledge_base_url: body.knowledge_base_url ?? null,
     product_name: body.product_name ?? null,
     primary_color: body.primary_color ?? null,
     rate_limit_per_hour: body.rate_limit_per_hour ?? 60,
     enable_chat: body.enable_chat ?? true,
     enable_email: body.enable_email ?? true,
     enable_calendly: body.enable_calendly ?? true,
+    enable_knowledge_base: body.enable_knowledge_base ?? true,
   });
 
   return NextResponse.json(installation);

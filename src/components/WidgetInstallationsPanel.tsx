@@ -9,12 +9,14 @@ interface Installation {
   name: string;
   allowed_origins: string;
   calendly_url: string | null;
+  knowledge_base_url: string | null;
   product_name: string | null;
   primary_color: string | null;
   rate_limit_per_hour: number;
   enable_chat: number;
   enable_email: number;
   enable_calendly: number;
+  enable_knowledge_base: number;
   is_active: number;
   created_at: number;
   updated_at: number;
@@ -26,12 +28,14 @@ interface EditForm {
   name: string;
   allowed_origins: string;
   calendly_url: string;
+  knowledge_base_url: string;
   product_name: string;
   primary_color: string;
   rate_limit_per_hour: number;
   enable_chat: boolean;
   enable_email: boolean;
   enable_calendly: boolean;
+  enable_knowledge_base: boolean;
   is_active: boolean;
 }
 
@@ -39,12 +43,14 @@ const emptyForm: EditForm = {
   name: "",
   allowed_origins: "",
   calendly_url: "",
+  knowledge_base_url: "",
   product_name: "",
   primary_color: "#0d9488",
   rate_limit_per_hour: 60,
   enable_chat: true,
   enable_email: true,
   enable_calendly: true,
+  enable_knowledge_base: true,
   is_active: true,
 };
 
@@ -87,12 +93,14 @@ export function WidgetInstallationsPanel() {
       name: i.name,
       allowed_origins: parseOrigins(i.allowed_origins).join("\n"),
       calendly_url: i.calendly_url ?? "",
+      knowledge_base_url: i.knowledge_base_url ?? "",
       product_name: i.product_name ?? "",
       primary_color: i.primary_color ?? "#0d9488",
       rate_limit_per_hour: i.rate_limit_per_hour,
       enable_chat: !!i.enable_chat,
       enable_email: !!i.enable_email,
       enable_calendly: !!i.enable_calendly,
+      enable_knowledge_base: !!i.enable_knowledge_base,
       is_active: !!i.is_active,
     });
     setEditing(i);
@@ -108,12 +116,14 @@ export function WidgetInstallationsPanel() {
       name: form.name.trim(),
       allowed_origins: form.allowed_origins.split("\n").map((s) => s.trim()).filter(Boolean),
       calendly_url: form.calendly_url.trim() || null,
+      knowledge_base_url: form.knowledge_base_url.trim() || null,
       product_name: form.product_name.trim() || null,
       primary_color: form.primary_color.trim() || null,
       rate_limit_per_hour: Number(form.rate_limit_per_hour) || 60,
       enable_chat: form.enable_chat,
       enable_email: form.enable_email,
       enable_calendly: form.enable_calendly,
+      enable_knowledge_base: form.enable_knowledge_base,
       is_active: form.is_active,
     };
     if (!payload.name) { setError("Name is required"); return; }
@@ -223,6 +233,15 @@ export function WidgetInstallationsPanel() {
             </label>
 
             <label className="space-y-1">
+              <span className="text-xs font-medium text-slate-600">Knowledge Base URL (optional)</span>
+              <input
+                type="text" value={form.knowledge_base_url} onChange={(e) => setForm((f) => ({ ...f, knowledge_base_url: e.target.value }))}
+                placeholder="https://help.your-product.com"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-mint-500 focus:border-transparent"
+              />
+            </label>
+
+            <label className="space-y-1">
               <span className="text-xs font-medium text-slate-600">Primary color</span>
               <div className="flex items-center gap-2">
                 <input
@@ -259,6 +278,10 @@ export function WidgetInstallationsPanel() {
                 <label className="flex items-center gap-2">
                   <input type="checkbox" checked={form.enable_calendly} onChange={(e) => setForm((f) => ({ ...f, enable_calendly: e.target.checked }))} className="rounded" />
                   <span className="text-sm text-slate-700">Schedule a Meeting <span className="text-xs text-slate-400">(requires Calendly URL)</span></span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={form.enable_knowledge_base} onChange={(e) => setForm((f) => ({ ...f, enable_knowledge_base: e.target.checked }))} className="rounded" />
+                  <span className="text-sm text-slate-700">Knowledge Base <span className="text-xs text-slate-400">(requires Knowledge Base URL)</span></span>
                 </label>
               </div>
             </div>
@@ -321,6 +344,7 @@ export function WidgetInstallationsPanel() {
                     <div className="mt-2 flex flex-wrap gap-1">
                       {i.enable_chat ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-mint-50 text-mint-700 border border-mint-200">Chat</span> : <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-200 line-through">Chat</span>}
                       {i.enable_email ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-mint-50 text-mint-700 border border-mint-200">Email</span> : <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-200 line-through">Email</span>}
+                      {i.enable_knowledge_base && i.knowledge_base_url ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-mint-50 text-mint-700 border border-mint-200">KB</span> : <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-200 line-through">KB</span>}
                       {i.enable_calendly && i.calendly_url ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-mint-50 text-mint-700 border border-mint-200">Calendly</span> : <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-200 line-through">Calendly</span>}
                     </div>
 

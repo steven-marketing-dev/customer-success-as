@@ -1380,27 +1380,31 @@ export class Repository {
     name: string;
     allowed_origins: string[];
     calendly_url?: string | null;
+    knowledge_base_url?: string | null;
     product_name?: string | null;
     primary_color?: string | null;
     rate_limit_per_hour?: number;
     enable_chat?: boolean;
     enable_email?: boolean;
     enable_calendly?: boolean;
+    enable_knowledge_base?: boolean;
   }): WidgetInstallation {
     const info = this.db.prepare(
-      `INSERT INTO widget_installations (key, name, allowed_origins, calendly_url, product_name, primary_color, rate_limit_per_hour, enable_chat, enable_email, enable_calendly)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO widget_installations (key, name, allowed_origins, calendly_url, knowledge_base_url, product_name, primary_color, rate_limit_per_hour, enable_chat, enable_email, enable_calendly, enable_knowledge_base)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       data.key,
       data.name,
       JSON.stringify(data.allowed_origins ?? []),
       data.calendly_url ?? null,
+      data.knowledge_base_url ?? null,
       data.product_name ?? null,
       data.primary_color ?? null,
       data.rate_limit_per_hour ?? 60,
       (data.enable_chat ?? true) ? 1 : 0,
       (data.enable_email ?? true) ? 1 : 0,
-      (data.enable_calendly ?? true) ? 1 : 0
+      (data.enable_calendly ?? true) ? 1 : 0,
+      (data.enable_knowledge_base ?? true) ? 1 : 0
     );
     return this.getWidgetInstallationById(Number(info.lastInsertRowid))!;
   }
@@ -1409,12 +1413,14 @@ export class Repository {
     name: string;
     allowed_origins: string[];
     calendly_url: string | null;
+    knowledge_base_url: string | null;
     product_name: string | null;
     primary_color: string | null;
     rate_limit_per_hour: number;
     enable_chat: number;
     enable_email: number;
     enable_calendly: number;
+    enable_knowledge_base: number;
     is_active: number;
   }>): WidgetInstallation | undefined {
     const sets: string[] = [];
@@ -1422,12 +1428,14 @@ export class Repository {
     if (fields.name !== undefined) { sets.push("name = ?"); vals.push(fields.name); }
     if (fields.allowed_origins !== undefined) { sets.push("allowed_origins = ?"); vals.push(JSON.stringify(fields.allowed_origins)); }
     if (fields.calendly_url !== undefined) { sets.push("calendly_url = ?"); vals.push(fields.calendly_url); }
+    if (fields.knowledge_base_url !== undefined) { sets.push("knowledge_base_url = ?"); vals.push(fields.knowledge_base_url); }
     if (fields.product_name !== undefined) { sets.push("product_name = ?"); vals.push(fields.product_name); }
     if (fields.primary_color !== undefined) { sets.push("primary_color = ?"); vals.push(fields.primary_color); }
     if (fields.rate_limit_per_hour !== undefined) { sets.push("rate_limit_per_hour = ?"); vals.push(fields.rate_limit_per_hour); }
     if (fields.enable_chat !== undefined) { sets.push("enable_chat = ?"); vals.push(fields.enable_chat); }
     if (fields.enable_email !== undefined) { sets.push("enable_email = ?"); vals.push(fields.enable_email); }
     if (fields.enable_calendly !== undefined) { sets.push("enable_calendly = ?"); vals.push(fields.enable_calendly); }
+    if (fields.enable_knowledge_base !== undefined) { sets.push("enable_knowledge_base = ?"); vals.push(fields.enable_knowledge_base); }
     if (fields.is_active !== undefined) { sets.push("is_active = ?"); vals.push(fields.is_active); }
     if (sets.length === 0) return this.getWidgetInstallationById(id);
     sets.push("updated_at = unixepoch()");
