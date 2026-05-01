@@ -5,6 +5,15 @@ import { hashSync } from "bcryptjs";
 
 // Types
 
+export type RootCause =
+  | "ui_friction"
+  | "onboarding_gap"
+  | "platform_bug"
+  | "feature_request"
+  | "how_to"
+  | "billing"
+  | "other";
+
 export interface Ticket {
   id: number;
   hubspot_id: string;
@@ -18,6 +27,11 @@ export interface Ticket {
   hubspot_updated_at: number | null;
   processed_at: number | null;
   created_at: number;
+  contact_id: string | null;
+  contact_email: string | null;
+  contact_name: string | null;
+  company_id: string | null;
+  company_name: string | null;
 }
 
 export interface QAPair {
@@ -33,6 +47,21 @@ export interface QAPair {
   channel: string | null;
   created_at: number;
   updated_at: number | null;
+  root_cause: RootCause | null;
+}
+
+export interface ClarityMetric {
+  id: number;
+  fetched_at: number;
+  date_bucket: string; // 'YYYY-MM-DD'
+  dimension: "Page" | "Browser" | "Device" | "URL";
+  dimension_value: string;
+  traffic: number;
+  rage_click_sessions: number;
+  dead_click_sessions: number;
+  excessive_scroll_sessions: number;
+  quick_back_sessions: number;
+  js_error_sessions: number;
 }
 
 export interface Category {
@@ -523,6 +552,30 @@ function initDb(db: Database.Database) {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
     CREATE INDEX IF NOT EXISTS idx_gmail_tokens_user ON gmail_tokens(user_id);
+
+    CREATE TABLE IF NOT EXISTS clarity_metrics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fetched_at INTEGER NOT NULL,
+      date_bucket TEXT NOT NULL,
+      dimension TEXT NOT NULL,
+      dimension_value TEXT NOT NULL,
+      traffic INTEGER NOT NULL DEFAULT 0,
+      rage_click_sessions INTEGER NOT NULL DEFAULT 0,
+      dead_click_sessions INTEGER NOT NULL DEFAULT 0,
+      excessive_scroll_sessions INTEGER NOT NULL DEFAULT 0,
+      quick_back_sessions INTEGER NOT NULL DEFAULT 0,
+      js_error_sessions INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(date_bucket, dimension, dimension_value)
+    );
+    CREATE INDEX IF NOT EXISTS idx_clarity_metrics_date ON clarity_metrics(date_bucket);
+
+    CREATE TABLE IF NOT EXISTS insight_cache (
+      date_key TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      PRIMARY KEY (date_key, content_hash)
+    );
   `);
 
   // Migrations: add columns if they don't exist yet
@@ -535,6 +588,12 @@ function initDb(db: Database.Database) {
     "ALTER TABLE widget_installations ADD COLUMN enable_calendly INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE widget_installations ADD COLUMN knowledge_base_url TEXT",
     "ALTER TABLE widget_installations ADD COLUMN enable_knowledge_base INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE tickets ADD COLUMN contact_id TEXT",
+    "ALTER TABLE tickets ADD COLUMN contact_email TEXT",
+    "ALTER TABLE tickets ADD COLUMN contact_name TEXT",
+    "ALTER TABLE tickets ADD COLUMN company_id TEXT",
+    "ALTER TABLE tickets ADD COLUMN company_name TEXT",
+    "ALTER TABLE qa_pairs ADD COLUMN root_cause TEXT",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }

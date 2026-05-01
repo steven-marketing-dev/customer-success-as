@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Play, RefreshCw, GitBranch, Loader2, CheckCircle2, AlertCircle, Radio, FlaskConical, Globe, Video } from "lucide-react";
+import { Play, RefreshCw, GitBranch, Loader2, CheckCircle2, AlertCircle, Radio, FlaskConical, Globe, Video, UserPlus, Tags } from "lucide-react";
 
-type RunMode = "incremental" | "full" | "recluster" | "test" | "scrape-kb" | "extract-loom";
+type RunMode = "incremental" | "full" | "recluster" | "test" | "scrape-kb" | "extract-loom" | "backfill-associations" | "backfill-root-cause";
 type Status = "idle" | "running" | "done" | "error";
 
 interface PipelineStats {
@@ -178,6 +178,8 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
     { mode: "recluster", label: "Re-clustering", desc: "New taxonomy", icon: GitBranch, color: "bg-violet-600 hover:bg-violet-700 text-white" },
     { mode: "scrape-kb", label: "Scrape KB", desc: "Public articles", icon: Globe, color: "bg-cyan-600 hover:bg-cyan-700 text-white" },
     { mode: "extract-loom", label: "Extract Videos", desc: "Loom process cards", icon: Video, color: "bg-rose-600 hover:bg-rose-700 text-white" },
+    { mode: "backfill-associations", label: "Backfill customer info", desc: "HubSpot contact + company", icon: UserPlus, color: "bg-blue-600 hover:bg-blue-700 text-white" },
+    { mode: "backfill-root-cause", label: "Backfill root causes", desc: "AI-classify history", icon: Tags, color: "bg-amber-600 hover:bg-amber-700 text-white" },
   ];
 
   return (

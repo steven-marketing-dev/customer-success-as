@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import crypto from "crypto";
-import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion, type GmailToken, type WidgetInstallation, type WidgetRating } from "./index";
+import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion, type GmailToken, type WidgetInstallation, type WidgetRating, type ClarityMetric } from "./index";
 
 export class Repository {
   private db: Database.Database;
@@ -20,6 +20,11 @@ export class Repository {
     priority?: string | null;
     hubspot_created_at?: number | null;
     hubspot_updated_at?: number | null;
+    contact_id?: string | null;
+    contact_email?: string | null;
+    contact_name?: string | null;
+    company_id?: string | null;
+    company_name?: string | null;
   }): Ticket {
     const existing = this.db
       .prepare("SELECT * FROM tickets WHERE hubspot_id = ?")
@@ -28,10 +33,17 @@ export class Repository {
     if (existing) {
       // Reset processed_at if ticket was updated in HubSpot so it gets re-processed
       const updatedChanged = data.hubspot_updated_at && data.hubspot_updated_at !== existing.hubspot_updated_at;
+      // Preserve existing association fields when caller didn't provide them (undefined)
+      const contactId = data.contact_id === undefined ? existing.contact_id : data.contact_id;
+      const contactEmail = data.contact_email === undefined ? existing.contact_email : data.contact_email;
+      const contactName = data.contact_name === undefined ? existing.contact_name : data.contact_name;
+      const companyId = data.company_id === undefined ? existing.company_id : data.company_id;
+      const companyName = data.company_name === undefined ? existing.company_name : data.company_name;
       this.db
         .prepare(
           `UPDATE tickets SET subject=?, content=?, channel=?, status=?, priority=?,
-           hubspot_created_at=?, hubspot_updated_at=?${updatedChanged ? ", processed_at=NULL" : ""} WHERE hubspot_id=?`
+           hubspot_created_at=?, hubspot_updated_at=?,
+           contact_id=?, contact_email=?, contact_name=?, company_id=?, company_name=?${updatedChanged ? ", processed_at=NULL" : ""} WHERE hubspot_id=?`
         )
         .run(
           data.subject ?? null,
@@ -41,6 +53,11 @@ export class Repository {
           data.priority ?? null,
           data.hubspot_created_at ?? null,
           data.hubspot_updated_at ?? null,
+          contactId,
+          contactEmail,
+          contactName,
+          companyId,
+          companyName,
           data.hubspot_id
         );
       return this.db
@@ -51,8 +68,9 @@ export class Repository {
     const info = this.db
       .prepare(
         `INSERT INTO tickets (hubspot_id, subject, content, channel, status, priority,
-         hubspot_created_at, hubspot_updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         hubspot_created_at, hubspot_updated_at,
+         contact_id, contact_email, contact_name, company_id, company_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         data.hubspot_id,
@@ -62,12 +80,44 @@ export class Repository {
         data.status ?? null,
         data.priority ?? null,
         data.hubspot_created_at ?? null,
-        data.hubspot_updated_at ?? null
+        data.hubspot_updated_at ?? null,
+        data.contact_id ?? null,
+        data.contact_email ?? null,
+        data.contact_name ?? null,
+        data.company_id ?? null,
+        data.company_name ?? null
       );
 
     return this.db
       .prepare("SELECT * FROM tickets WHERE id = ?")
       .get(info.lastInsertRowid) as Ticket;
+  }
+
+  setTicketAssociations(ticketId: number, data: {
+    contact_id: string | null;
+    contact_email: string | null;
+    contact_name: string | null;
+    company_id: string | null;
+    company_name: string | null;
+  }): void {
+    this.db
+      .prepare(
+        `UPDATE tickets SET contact_id=?, contact_email=?, contact_name=?, company_id=?, company_name=? WHERE id=?`
+      )
+      .run(
+        data.contact_id,
+        data.contact_email,
+        data.contact_name,
+        data.company_id,
+        data.company_name,
+        ticketId
+      );
+  }
+
+  getTicketsMissingAssociations(): Ticket[] {
+    return this.db
+      .prepare("SELECT * FROM tickets WHERE contact_email IS NULL ORDER BY hubspot_created_at DESC")
+      .all() as Ticket[];
   }
 
   getUnprocessedTickets(): Ticket[] {
@@ -105,12 +155,13 @@ export class Repository {
     summary?: string | null;
     resolved?: boolean;
     channel?: string | null;
+    root_cause?: string | null;
   }): QAPair {
     const info = this.db
       .prepare(
         `INSERT INTO qa_pairs (ticket_id, question, question_template, question_variables,
-         answer, resolution_steps, summary, resolved, channel)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         answer, resolution_steps, summary, resolved, channel, root_cause)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         data.ticket_id,
@@ -121,7 +172,8 @@ export class Repository {
         data.resolution_steps ?? null,
         data.summary ?? null,
         data.resolved ? 1 : 0,
-        data.channel ?? null
+        data.channel ?? null,
+        data.root_cause ?? null
       );
 
     return this.db
@@ -174,8 +226,8 @@ export class Repository {
       .all(ticketId) as QAPair[];
   }
 
-  updateQAPair(id: number, fields: Partial<Pick<QAPair, "question" | "question_template" | "question_variables" | "answer" | "resolution_steps" | "summary" | "resolved" | "channel">>): QAPair {
-    const allowed = ["question", "question_template", "question_variables", "answer", "resolution_steps", "summary", "resolved", "channel"] as const;
+  updateQAPair(id: number, fields: Partial<Pick<QAPair, "question" | "question_template" | "question_variables" | "answer" | "resolution_steps" | "summary" | "resolved" | "channel" | "root_cause">>): QAPair {
+    const allowed = ["question", "question_template", "question_variables", "answer", "resolution_steps", "summary", "resolved", "channel", "root_cause"] as const;
     const entries = Object.entries(fields).filter(([k]) => (allowed as readonly string[]).includes(k));
     if (entries.length === 0) return this.getQAPairById(id)!;
 
@@ -1509,5 +1561,538 @@ export class Repository {
       "SELECT COUNT(*) as n FROM widget_rate_events WHERE installation_id = ? AND ip_hash = ? AND created_at >= unixepoch() - 3600"
     ).get(installationId, ipHash) as { n: number };
     return row.n;
+  }
+
+  // ─── Insights / Dashboard ─────────────────────────────────────────────────
+
+  getQAPairsMissingRootCause(): QAPair[] {
+    return this.db
+      .prepare("SELECT * FROM qa_pairs WHERE root_cause IS NULL ORDER BY created_at DESC")
+      .all() as QAPair[];
+  }
+
+  /** Stats inside (sinceTs..now] plus the same-length prior window for delta arrows. */
+  getInsightStats(sinceTs: number | null): {
+    tickets: number;
+    qa_pairs: number;
+    resolved_pct: number;
+    prev_tickets: number;
+    recurring_share_pct: number;
+    at_risk_count: number;
+  } {
+    const ticketsRow = sinceTs === null
+      ? this.db.prepare("SELECT COUNT(*) as n FROM tickets").get() as { n: number }
+      : this.db.prepare("SELECT COUNT(*) as n FROM tickets WHERE COALESCE(hubspot_created_at, created_at) >= ?").get(sinceTs) as { n: number };
+
+    const qaRow = sinceTs === null
+      ? this.db.prepare("SELECT COUNT(*) as n, SUM(resolved) as r FROM qa_pairs").get() as { n: number; r: number | null }
+      : this.db.prepare(
+          `SELECT COUNT(*) as n, SUM(qa.resolved) as r FROM qa_pairs qa
+           JOIN tickets t ON qa.ticket_id = t.id
+           WHERE COALESCE(t.hubspot_created_at, t.created_at) >= ?`
+        ).get(sinceTs) as { n: number; r: number | null };
+
+    let prevTickets = 0;
+    if (sinceTs !== null) {
+      const windowSize = Math.floor(Date.now() / 1000) - sinceTs;
+      const prevStart = sinceTs - windowSize;
+      const prevRow = this.db
+        .prepare(
+          "SELECT COUNT(*) as n FROM tickets WHERE COALESCE(hubspot_created_at, created_at) >= ? AND COALESCE(hubspot_created_at, created_at) < ?"
+        )
+        .get(prevStart, sinceTs) as { n: number };
+      prevTickets = prevRow.n;
+    }
+
+    // Recurring share = qa_pairs whose category has >=3 qa_pairs in window / total qa
+    const recurringRow = sinceTs === null
+      ? this.db.prepare(
+          `SELECT COUNT(*) as n FROM qa_pairs qa
+           JOIN qa_category_map m ON m.qa_id = qa.id
+           WHERE m.category_id IN (
+             SELECT m2.category_id FROM qa_category_map m2
+             GROUP BY m2.category_id HAVING COUNT(*) >= 3
+           )`
+        ).get() as { n: number }
+      : this.db.prepare(
+          `SELECT COUNT(DISTINCT qa.id) as n FROM qa_pairs qa
+           JOIN tickets t ON qa.ticket_id = t.id
+           JOIN qa_category_map m ON m.qa_id = qa.id
+           WHERE COALESCE(t.hubspot_created_at, t.created_at) >= ?
+             AND m.category_id IN (
+               SELECT m2.category_id FROM qa_category_map m2
+               JOIN qa_pairs qa2 ON qa2.id = m2.qa_id
+               JOIN tickets t2 ON qa2.ticket_id = t2.id
+               WHERE COALESCE(t2.hubspot_created_at, t2.created_at) >= ?
+               GROUP BY m2.category_id HAVING COUNT(*) >= 3
+             )`
+        ).get(sinceTs, sinceTs) as { n: number };
+
+    const atRisk = this.getAtRiskCustomers(sinceTs).filter((c) => c.suggest_onboarding).length;
+
+    return {
+      tickets: ticketsRow.n,
+      qa_pairs: qaRow.n,
+      resolved_pct: qaRow.n > 0 ? Math.round(((qaRow.r ?? 0) / qaRow.n) * 100) : 0,
+      prev_tickets: prevTickets,
+      recurring_share_pct: qaRow.n > 0 ? Math.round((recurringRow.n / qaRow.n) * 100) : 0,
+      at_risk_count: atRisk,
+    };
+  }
+
+  /** Recurring issues, grouped by category (the categorizer already does the
+   *  semantic clustering — question_template is too specific to repeat). */
+  getRecurringIssues(sinceTs: number | null, minCount = 3, limit = 20): Array<{
+    template: string;          // category name (kept name for API compatibility)
+    count: number;
+    last_seen: number;
+    sample_question: string;
+    category_name: string | null;
+    root_cause: string | null;
+  }> {
+    const where = sinceTs === null
+      ? "1=1"
+      : "COALESCE(t.hubspot_created_at, t.created_at) >= ?";
+    const params: unknown[] = sinceTs === null ? [] : [sinceTs];
+
+    const rows = this.db.prepare(
+      `SELECT c.id as category_id,
+              c.name as category_name,
+              COUNT(qa.id) as count,
+              MAX(qa.created_at) as last_seen,
+              MAX(qa.question) as sample_question,
+              (
+                SELECT qa2.root_cause FROM qa_pairs qa2
+                JOIN qa_category_map m2 ON m2.qa_id = qa2.id
+                WHERE m2.category_id = c.id AND qa2.root_cause IS NOT NULL
+                GROUP BY qa2.root_cause
+                ORDER BY COUNT(*) DESC
+                LIMIT 1
+              ) as root_cause
+       FROM categories c
+       JOIN qa_category_map m ON m.category_id = c.id
+       JOIN qa_pairs qa ON qa.id = m.qa_id
+       JOIN tickets t ON t.id = qa.ticket_id
+       WHERE ${where}
+       GROUP BY c.id
+       HAVING COUNT(qa.id) >= ?
+       ORDER BY count DESC, last_seen DESC
+       LIMIT ?`
+    ).all(...params, minCount, limit) as Array<{
+      category_id: number;
+      category_name: string;
+      count: number;
+      last_seen: number;
+      sample_question: string;
+      root_cause: string | null;
+    }>;
+
+    return rows.map((r) => ({
+      template: r.category_name,
+      count: r.count,
+      last_seen: r.last_seen,
+      sample_question: r.sample_question,
+      category_name: r.category_name,
+      root_cause: r.root_cause,
+    }));
+  }
+
+  getRootCauseBreakdown(sinceTs: number | null): Array<{ root_cause: string; count: number }> {
+    const sql = sinceTs === null
+      ? `SELECT COALESCE(qa.root_cause, 'other') as root_cause, COUNT(*) as count
+         FROM qa_pairs qa
+         GROUP BY COALESCE(qa.root_cause, 'other')
+         ORDER BY count DESC`
+      : `SELECT COALESCE(qa.root_cause, 'other') as root_cause, COUNT(*) as count
+         FROM qa_pairs qa
+         JOIN tickets t ON qa.ticket_id = t.id
+         WHERE COALESCE(t.hubspot_created_at, t.created_at) >= ?
+         GROUP BY COALESCE(qa.root_cause, 'other')
+         ORDER BY count DESC`;
+    const rows = sinceTs === null
+      ? this.db.prepare(sql).all()
+      : this.db.prepare(sql).all(sinceTs);
+    return rows as Array<{ root_cause: string; count: number }>;
+  }
+
+  /** Stacked weekly trend. bucketDays is the bucket width (default 7). */
+  getRootCauseTrend(sinceTs: number | null, bucketDays = 7): Array<{
+    date_bucket: string;
+    root_cause: string;
+    count: number;
+  }> {
+    const bucketSecs = bucketDays * 86400;
+    const sql = sinceTs === null
+      ? `SELECT strftime('%Y-%m-%d', datetime((COALESCE(t.hubspot_created_at, t.created_at) / ${bucketSecs}) * ${bucketSecs}, 'unixepoch')) as date_bucket,
+                COALESCE(qa.root_cause, 'other') as root_cause,
+                COUNT(*) as count
+         FROM qa_pairs qa
+         JOIN tickets t ON qa.ticket_id = t.id
+         GROUP BY date_bucket, root_cause
+         ORDER BY date_bucket ASC`
+      : `SELECT strftime('%Y-%m-%d', datetime((COALESCE(t.hubspot_created_at, t.created_at) / ${bucketSecs}) * ${bucketSecs}, 'unixepoch')) as date_bucket,
+                COALESCE(qa.root_cause, 'other') as root_cause,
+                COUNT(*) as count
+         FROM qa_pairs qa
+         JOIN tickets t ON qa.ticket_id = t.id
+         WHERE COALESCE(t.hubspot_created_at, t.created_at) >= ?
+         GROUP BY date_bucket, root_cause
+         ORDER BY date_bucket ASC`;
+    const rows = sinceTs === null
+      ? this.db.prepare(sql).all()
+      : this.db.prepare(sql).all(sinceTs);
+    return rows as Array<{ date_bucket: string; root_cause: string; count: number }>;
+  }
+
+  getAtRiskCustomers(sinceTs: number | null, limit = 20): Array<{
+    company_name: string;
+    contact_emails: string[];
+    ticket_count: number;
+    how_to_pct: number;
+    onboarding_gap_pct: number;
+    last_ticket_at: number;
+    suggest_onboarding: boolean;
+  }> {
+    const where = sinceTs === null
+      ? "t.company_name IS NOT NULL AND t.company_name != ''"
+      : "t.company_name IS NOT NULL AND t.company_name != '' AND COALESCE(t.hubspot_created_at, t.created_at) >= ?";
+    const params: unknown[] = sinceTs === null ? [] : [sinceTs];
+
+    const rows = this.db.prepare(
+      `SELECT t.company_name as company_name,
+              COUNT(DISTINCT t.id) as ticket_count,
+              MAX(COALESCE(t.hubspot_created_at, t.created_at)) as last_ticket_at,
+              GROUP_CONCAT(DISTINCT t.contact_email) as emails_csv,
+              SUM(CASE WHEN qa.root_cause = 'how_to' THEN 1 ELSE 0 END) as how_to_count,
+              SUM(CASE WHEN qa.root_cause = 'onboarding_gap' THEN 1 ELSE 0 END) as onboarding_gap_count,
+              COUNT(qa.id) as qa_count
+       FROM tickets t
+       LEFT JOIN qa_pairs qa ON qa.ticket_id = t.id
+       WHERE ${where}
+       GROUP BY t.company_name
+       ORDER BY ticket_count DESC, last_ticket_at DESC
+       LIMIT ?`
+    ).all(...params, limit) as Array<{
+      company_name: string;
+      ticket_count: number;
+      last_ticket_at: number;
+      emails_csv: string | null;
+      how_to_count: number;
+      onboarding_gap_count: number;
+      qa_count: number;
+    }>;
+
+    return rows.map((r) => {
+      const emails = (r.emails_csv ?? "")
+        .split(",")
+        .map((e) => e.trim())
+        .filter(Boolean);
+      const howToPct = r.qa_count > 0 ? (r.how_to_count / r.qa_count) * 100 : 0;
+      const onboardingPct = r.qa_count > 0 ? (r.onboarding_gap_count / r.qa_count) * 100 : 0;
+      const fraction = r.qa_count > 0 ? (r.how_to_count + r.onboarding_gap_count) / r.qa_count : 0;
+      return {
+        company_name: r.company_name,
+        contact_emails: emails,
+        ticket_count: r.ticket_count,
+        how_to_pct: Math.round(howToPct),
+        onboarding_gap_pct: Math.round(onboardingPct),
+        last_ticket_at: r.last_ticket_at,
+        suggest_onboarding: r.ticket_count >= 5 && fraction >= 0.6,
+      };
+    });
+  }
+
+  getCustomerTickets(companyName: string, sinceTs: number | null): {
+    tickets: Array<Ticket & { qa_root_causes: string[] }>;
+    root_cause_distribution: Array<{ root_cause: string; count: number }>;
+    contacts: Array<{ contact_email: string | null; contact_name: string | null }>;
+  } {
+    const where = sinceTs === null
+      ? "t.company_name = ?"
+      : "t.company_name = ? AND COALESCE(t.hubspot_created_at, t.created_at) >= ?";
+    const params: unknown[] = sinceTs === null ? [companyName] : [companyName, sinceTs];
+
+    const tickets = this.db.prepare(
+      `SELECT t.* FROM tickets t WHERE ${where} ORDER BY COALESCE(t.hubspot_created_at, t.created_at) DESC`
+    ).all(...params) as Ticket[];
+
+    const ticketsWithCauses = tickets.map((t) => {
+      const causes = this.db.prepare(
+        "SELECT COALESCE(root_cause, 'other') as rc FROM qa_pairs WHERE ticket_id = ?"
+      ).all(t.id) as Array<{ rc: string }>;
+      return { ...t, qa_root_causes: causes.map((c) => c.rc) };
+    });
+
+    const distribution = this.db.prepare(
+      `SELECT COALESCE(qa.root_cause, 'other') as root_cause, COUNT(*) as count
+       FROM qa_pairs qa
+       JOIN tickets t ON qa.ticket_id = t.id
+       WHERE ${where}
+       GROUP BY COALESCE(qa.root_cause, 'other')
+       ORDER BY count DESC`
+    ).all(...params) as Array<{ root_cause: string; count: number }>;
+
+    const contacts = this.db.prepare(
+      `SELECT DISTINCT t.contact_email, t.contact_name FROM tickets t WHERE ${where}
+       AND t.contact_email IS NOT NULL`
+    ).all(...params) as Array<{ contact_email: string | null; contact_name: string | null }>;
+
+    return { tickets: ticketsWithCauses, root_cause_distribution: distribution, contacts };
+  }
+
+  // ─── Microsoft Clarity metrics ────────────────────────────────────────────
+
+  upsertClarityMetric(data: Omit<ClarityMetric, "id" | "fetched_at">): void {
+    this.db.prepare(
+      `INSERT INTO clarity_metrics
+       (fetched_at, date_bucket, dimension, dimension_value, traffic,
+        rage_click_sessions, dead_click_sessions, excessive_scroll_sessions,
+        quick_back_sessions, js_error_sessions)
+       VALUES (unixepoch(), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(date_bucket, dimension, dimension_value) DO UPDATE SET
+         fetched_at = unixepoch(),
+         traffic = excluded.traffic,
+         rage_click_sessions = excluded.rage_click_sessions,
+         dead_click_sessions = excluded.dead_click_sessions,
+         excessive_scroll_sessions = excluded.excessive_scroll_sessions,
+         quick_back_sessions = excluded.quick_back_sessions,
+         js_error_sessions = excluded.js_error_sessions`
+    ).run(
+      data.date_bucket,
+      data.dimension,
+      data.dimension_value,
+      data.traffic,
+      data.rage_click_sessions,
+      data.dead_click_sessions,
+      data.excessive_scroll_sessions,
+      data.quick_back_sessions,
+      data.js_error_sessions
+    );
+  }
+
+  getClarityHotspots(sinceTs: number | null, limit = 10): Array<{
+    page: string;
+    traffic: number;
+    rage_clicks: number;
+    dead_clicks: number;
+    js_errors: number;
+    quick_back: number;
+    friction_total: number;
+  }> {
+    // Prefer Page dimension if it has data, else fall back to URL.
+    // Some Clarity projects only return URL-level data depending on how pages
+    // are configured / instrumented.
+    const dateClause = sinceTs === null ? "" : "AND date_bucket >= date(?, 'unixepoch')";
+    const params: unknown[] = sinceTs === null ? [] : [sinceTs];
+
+    const pageCount = sinceTs === null
+      ? this.db.prepare("SELECT COUNT(*) as n FROM clarity_metrics WHERE dimension = 'Page'").get() as { n: number }
+      : this.db.prepare("SELECT COUNT(*) as n FROM clarity_metrics WHERE dimension = 'Page' AND date_bucket >= date(?, 'unixepoch')").get(sinceTs) as { n: number };
+
+    const dimension = pageCount.n > 0 ? "Page" : "URL";
+
+    const rows = this.db.prepare(
+      `SELECT dimension_value as page,
+              SUM(traffic) as traffic,
+              SUM(rage_click_sessions) as rage_clicks,
+              SUM(dead_click_sessions) as dead_clicks,
+              SUM(js_error_sessions) as js_errors,
+              SUM(quick_back_sessions) as quick_back,
+              SUM(rage_click_sessions + dead_click_sessions + js_error_sessions + quick_back_sessions) as friction_total
+       FROM clarity_metrics
+       WHERE dimension = '${dimension}' ${dateClause}
+       GROUP BY dimension_value
+       HAVING friction_total > 0
+       ORDER BY friction_total DESC
+       LIMIT ?`
+    ).all(...params, limit) as Array<{
+      page: string;
+      traffic: number;
+      rage_clicks: number;
+      dead_clicks: number;
+      js_errors: number;
+      quick_back: number;
+      friction_total: number;
+    }>;
+    return rows;
+  }
+
+  countClarityRows(): number {
+    const r = this.db.prepare("SELECT COUNT(*) as n FROM clarity_metrics").get() as { n: number };
+    return r.n;
+  }
+
+  clearClarityMetricsForDate(dateBucket: string, dimensions: string[]): void {
+    if (dimensions.length === 0) return;
+    const placeholders = dimensions.map(() => "?").join(", ");
+    this.db.prepare(
+      `DELETE FROM clarity_metrics WHERE date_bucket = ? AND dimension IN (${placeholders})`
+    ).run(dateBucket, ...dimensions);
+  }
+
+  // ─── Issue Cards (Phase 2 synthesis layer) ────────────────────────────────
+
+  /** Enriched per-category aggregation: count, prev-window count, resolved %,
+   *  distinct companies, top-3 companies, 3 sample questions, modal root cause. */
+  getRecurringIssuesEnriched(sinceTs: number | null, minCount = 3, limit = 20): Array<{
+    category_id: number;
+    category_name: string;
+    count: number;
+    prev_count: number;
+    last_seen: number;
+    top_root_cause: string | null;
+    resolved_pct: number;
+    distinct_companies: number;
+    top_companies: Array<{ company_name: string; ticket_count: number }>;
+    sample_questions: string[];
+  }> {
+    const where = sinceTs === null ? "1=1" : "COALESCE(t.hubspot_created_at, t.created_at) >= ?";
+    const params: unknown[] = sinceTs === null ? [] : [sinceTs];
+
+    const baseRows = this.db.prepare(
+      `SELECT c.id as category_id,
+              c.name as category_name,
+              COUNT(qa.id) as count,
+              MAX(qa.created_at) as last_seen,
+              SUM(qa.resolved) as resolved_count,
+              COUNT(DISTINCT t.company_name) as distinct_companies,
+              (
+                SELECT qa2.root_cause FROM qa_pairs qa2
+                JOIN qa_category_map m2 ON m2.qa_id = qa2.id
+                WHERE m2.category_id = c.id AND qa2.root_cause IS NOT NULL
+                GROUP BY qa2.root_cause
+                ORDER BY COUNT(*) DESC LIMIT 1
+              ) as top_root_cause
+       FROM categories c
+       JOIN qa_category_map m ON m.category_id = c.id
+       JOIN qa_pairs qa ON qa.id = m.qa_id
+       JOIN tickets t ON t.id = qa.ticket_id
+       WHERE ${where}
+       GROUP BY c.id
+       HAVING COUNT(qa.id) >= ?
+       ORDER BY count DESC, last_seen DESC
+       LIMIT ?`
+    ).all(...params, minCount, limit) as Array<{
+      category_id: number;
+      category_name: string;
+      count: number;
+      last_seen: number;
+      resolved_count: number | null;
+      distinct_companies: number;
+      top_root_cause: string | null;
+    }>;
+
+    if (baseRows.length === 0) return [];
+
+    // Compute prev_count per category (equal-length prior window) — skip when range = "all"
+    let prevCountByCat = new Map<number, number>();
+    if (sinceTs !== null) {
+      const windowSize = Math.floor(Date.now() / 1000) - sinceTs;
+      const prevStart = sinceTs - windowSize;
+      const ids = baseRows.map((r) => r.category_id);
+      const placeholders = ids.map(() => "?").join(", ");
+      const prevRows = this.db.prepare(
+        `SELECT c.id as category_id, COUNT(qa.id) as prev_count
+         FROM categories c
+         JOIN qa_category_map m ON m.category_id = c.id
+         JOIN qa_pairs qa ON qa.id = m.qa_id
+         JOIN tickets t ON t.id = qa.ticket_id
+         WHERE c.id IN (${placeholders})
+           AND COALESCE(t.hubspot_created_at, t.created_at) >= ?
+           AND COALESCE(t.hubspot_created_at, t.created_at) < ?
+         GROUP BY c.id`
+      ).all(...ids, prevStart, sinceTs) as Array<{ category_id: number; prev_count: number }>;
+      prevCountByCat = new Map(prevRows.map((r) => [r.category_id, r.prev_count]));
+    }
+
+    // Per-category: top 3 companies + 3 sample questions
+    const topCompaniesStmt = this.db.prepare(
+      `SELECT t.company_name, COUNT(DISTINCT t.id) as ticket_count
+       FROM qa_pairs qa
+       JOIN qa_category_map m ON m.qa_id = qa.id
+       JOIN tickets t ON t.id = qa.ticket_id
+       WHERE m.category_id = ?
+         AND t.company_name IS NOT NULL AND t.company_name != ''
+         ${sinceTs === null ? "" : "AND COALESCE(t.hubspot_created_at, t.created_at) >= ?"}
+       GROUP BY t.company_name
+       ORDER BY ticket_count DESC, MAX(COALESCE(t.hubspot_created_at, t.created_at)) DESC
+       LIMIT 3`
+    );
+
+    const sampleQuestionsStmt = this.db.prepare(
+      `SELECT DISTINCT qa.question
+       FROM qa_pairs qa
+       JOIN qa_category_map m ON m.qa_id = qa.id
+       JOIN tickets t ON t.id = qa.ticket_id
+       WHERE m.category_id = ?
+         ${sinceTs === null ? "" : "AND COALESCE(t.hubspot_created_at, t.created_at) >= ?"}
+       ORDER BY qa.created_at DESC
+       LIMIT 3`
+    );
+
+    return baseRows.map((r) => {
+      const topCompaniesParams: unknown[] = sinceTs === null ? [r.category_id] : [r.category_id, sinceTs];
+      const top_companies = topCompaniesStmt.all(...topCompaniesParams) as Array<{ company_name: string; ticket_count: number }>;
+
+      const sampleParams: unknown[] = sinceTs === null ? [r.category_id] : [r.category_id, sinceTs];
+      const sampleRows = sampleQuestionsStmt.all(...sampleParams) as Array<{ question: string }>;
+
+      return {
+        category_id: r.category_id,
+        category_name: r.category_name,
+        count: r.count,
+        prev_count: prevCountByCat.get(r.category_id) ?? 0,
+        last_seen: r.last_seen,
+        top_root_cause: r.top_root_cause,
+        resolved_pct: r.count > 0 ? Math.round(((r.resolved_count ?? 0) / r.count) * 100) : 0,
+        distinct_companies: r.distinct_companies,
+        top_companies,
+        sample_questions: sampleRows.map((s) => s.question),
+      };
+    });
+  }
+
+  /** Return concatenated qa_pair text per category for entity extraction.
+   *  Combines question + answer + summary so entity extraction sees all mentions. */
+  getCategoryQATexts(categoryIds: number[], sinceTs: number | null): Map<number, string[]> {
+    if (categoryIds.length === 0) return new Map();
+    const placeholders = categoryIds.map(() => "?").join(", ");
+    const where = sinceTs === null
+      ? `m.category_id IN (${placeholders})`
+      : `m.category_id IN (${placeholders}) AND COALESCE(t.hubspot_created_at, t.created_at) >= ?`;
+    const params: unknown[] = sinceTs === null ? [...categoryIds] : [...categoryIds, sinceTs];
+
+    const rows = this.db.prepare(
+      `SELECT m.category_id, qa.question, qa.answer, qa.summary
+       FROM qa_pairs qa
+       JOIN qa_category_map m ON m.qa_id = qa.id
+       JOIN tickets t ON t.id = qa.ticket_id
+       WHERE ${where}`
+    ).all(...params) as Array<{ category_id: number; question: string; answer: string | null; summary: string | null }>;
+
+    const out = new Map<number, string[]>();
+    for (const r of rows) {
+      const text = [r.question, r.answer ?? "", r.summary ?? ""].filter(Boolean).join(" ");
+      const list = out.get(r.category_id) ?? [];
+      list.push(text);
+      out.set(r.category_id, list);
+    }
+    return out;
+  }
+
+  // ─── Insight cache (for AI executive summary) ─────────────────────────────
+
+  getInsightCache(dateKey: string, contentHash: string): string | null {
+    const row = this.db.prepare(
+      "SELECT payload FROM insight_cache WHERE date_key = ? AND content_hash = ?"
+    ).get(dateKey, contentHash) as { payload: string } | undefined;
+    return row?.payload ?? null;
+  }
+
+  setInsightCache(dateKey: string, contentHash: string, payload: string): void {
+    this.db.prepare(
+      `INSERT INTO insight_cache (date_key, content_hash, payload) VALUES (?, ?, ?)
+       ON CONFLICT(date_key, content_hash) DO UPDATE SET payload = excluded.payload, created_at = unixepoch()`
+    ).run(dateKey, contentHash, payload);
   }
 }

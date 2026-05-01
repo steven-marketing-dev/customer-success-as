@@ -15,7 +15,7 @@ export const maxDuration = 5; // Returns immediately after starting
 export async function POST(req: NextRequest) {
   const { mode = "incremental", testLimit } = await req.json() as { mode?: string; testLimit?: number };
 
-  if (!["incremental", "full", "recluster", "test", "scrape-kb", "extract-loom"].includes(mode)) {
+  if (!["incremental", "full", "recluster", "test", "scrape-kb", "extract-loom", "backfill-associations", "backfill-root-cause"].includes(mode)) {
     return NextResponse.json({ error: "Invalid mode" }, { status: 400 });
   }
 
@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
 
   // Fire and forget — keeps running even after this request returns
   runPipeline({
-    mode: mode as "incremental" | "full" | "recluster" | "test" | "scrape-kb",
+    mode: mode as "incremental" | "full" | "recluster" | "test" | "scrape-kb" | "extract-loom" | "backfill-associations" | "backfill-root-cause",
     testLimit: mode === "test" ? (testLimit ?? 3) : undefined,
     onProgress: (event) => {
       if (event.type === "log") appendLog(event.message);
