@@ -52,14 +52,21 @@ async function fetchSitemapUrls(): Promise<string[]> {
   return urls;
 }
 
-/** Extract article data from __NEXT_DATA__ JSON embedded in the page */
-async function scrapeArticle(url: string): Promise<{
+interface ScrapedArticle {
   title: string;
   content: string;
   category: string | null;
-} | null> {
+  sourceId: number | null;
+}
+
+type FetchOutcome =
+  | { ok: true; article: ScrapedArticle }
+  | { ok: false; status: number | null };
+
+/** Extract article data from __NEXT_DATA__ JSON embedded in the page */
+async function scrapeArticle(url: string): Promise<FetchOutcome> {
   const res = await fetch(url);
-  if (!res.ok) return null;
+  if (!res.ok) return { ok: false, status: res.status };
   const html = await res.text();
   const $ = cheerio.load(html);
 
@@ -73,6 +80,7 @@ async function scrapeArticle(url: string): Promise<{
         const title = article.title || "";
         const htmlContent: string = article.content || "";
         const lead: string = article.lead || "";
+        const sourceId = typeof article.id === "number" ? article.id : null;
 
         // Convert HTML content to plain text
         const $content = cheerio.load(htmlContent);
@@ -84,7 +92,6 @@ async function scrapeArticle(url: string): Promise<{
         let category: string | null = null;
         const categories = data?.props?.pageProps?.allCategories;
         if (Array.isArray(categories) && categories.length > 0) {
-          // Find the category this article belongs to
           const articleCatId = article.categoryId;
           if (articleCatId) {
             const cat = categories.find((c: { id: number }) => c.id === articleCatId);
@@ -92,14 +99,14 @@ async function scrapeArticle(url: string): Promise<{
           }
         }
 
-        return { title, content: fullText, category };
+        return { ok: true, article: { title, content: fullText, category, sourceId } };
       }
     } catch {
       // Fall through to HTML extraction
     }
   }
 
-  // Fallback: extract from HTML directly
+  // Fallback: extract from HTML directly (no stable source id available)
   const title = $("h1").first().text().trim() || $("title").text().trim();
   $("script, style, nav, footer, header, iframe, figure").remove();
   const content = $("article, main, .article-body, .content")
@@ -108,13 +115,11 @@ async function scrapeArticle(url: string): Promise<{
     .replace(/\s+/g, " ")
     .trim();
 
-  if (!title || !content) return null;
+  if (!title || !content) return { ok: false, status: null };
 
-  // Infer category from URL path
   const slug = url.replace(/.*\/article\//, "").replace(/\/$/, "");
   const category = inferCategoryFromSlug(slug);
-
-  return { title, content, category };
+  return { ok: true, article: { title, content, category, sourceId: null } };
 }
 
 function inferCategoryFromSlug(slug: string): string | null {
@@ -168,6 +173,37 @@ export async function runScrape(
   const repo = new Repository();
   const emit = (event: ScrapeProgress) => onProgress?.(event);
 
+  // One-time backfill: stamp source_id on legacy rows by re-fetching their URL.
+  // After this pass, slug changes on the source CMS collapse onto the existing row
+  // via source_id rather than inserting a duplicate.
+  const legacy = repo.getKBArticlesMissingSourceId();
+  if (legacy.length > 0) {
+    emit({ type: "log", message: `Backfilling source_id for ${legacy.length} legacy article(s)...` });
+    let backfilled = 0;
+    let gone = 0;
+    await poolMap(
+      legacy,
+      async (row) => {
+        try {
+          const outcome = await scrapeArticle(row.url);
+          if (!outcome.ok) {
+            if (outcome.status === 404 || outcome.status === 410) {
+              gone++;
+              emit({ type: "log", message: `⚠ Stale (${outcome.status}), no source_id available: ${row.url}` });
+            }
+            return;
+          }
+          if (outcome.article.sourceId == null) return;
+          if (repo.setKBArticleSourceId(row.id, outcome.article.sourceId)) backfilled++;
+        } catch {
+          // Network hiccups: skip; next run will retry.
+        }
+      },
+      CONCURRENCY,
+    );
+    emit({ type: "log", message: `Backfill done: ${backfilled} stamped, ${gone} 404/410 (left in place for manual review)` });
+  }
+
   emit({ type: "log", message: "Fetching sitemap..." });
   const urls = await fetchSitemapUrls();
   emit({ type: "log", message: `Found ${urls.length} article URLs` });
@@ -178,16 +214,18 @@ export async function runScrape(
     urls,
     async (url, index) => {
       try {
-        const article = await scrapeArticle(url);
-        if (!article || !article.content) {
+        const outcome = await scrapeArticle(url);
+        if (!outcome.ok || !outcome.article.content) {
           stats.failed++;
           emit({ type: "log", message: `✗ [${index + 1}/${urls.length}] Empty: ${url}` });
           return;
         }
+        const article = outcome.article;
 
         const hash = computeHash(article.content);
         const result = repo.upsertKBArticle({
           url,
+          source_id: article.sourceId,
           title: article.title,
           content: article.content,
           category: article.category,

@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { LayoutDashboard, BookOpen, Zap, RefreshCw, Trash2, MessageCircle, BookA, LogOut, UserPlus, Users, X, ChevronDown, Star, ClipboardList, AlertCircle, Sparkles, Settings, Mail, Link2, Paperclip, Code2 } from "lucide-react";
-import { StatsGrid } from "@/components/StatsGrid";
 import { CategoryGrid, type CategorySummary } from "@/components/CategoryGrid";
+import { InsightsDashboard } from "@/components/InsightsDashboard";
 import { SearchPanel } from "@/components/SearchPanel";
 import { PipelinePanel } from "@/components/PipelinePanel";
 import { AgentPanel, type AuthUser, type AgentPanelHandle } from "@/components/AgentPanel";
@@ -12,7 +12,7 @@ import { ArticlesPanel } from "@/components/ArticlesPanel";
 import { BehavioralCardsPanel } from "@/components/BehavioralCardsPanel";
 import { RefDocsPanel } from "@/components/RefDocsPanel";
 import VideoGuidesPanel from "@/components/VideoGuidesPanel";
-import { QACard, type QAItem } from "@/components/QACard";
+import { type QAItem } from "@/components/QACard";
 import { WidgetInstallationsPanel } from "@/components/WidgetInstallationsPanel";
 
 type Tab = "dashboard" | "kb" | "pipeline" | "agent" | "glossary";
@@ -363,70 +363,8 @@ export default function Home() {
         ) : (
           <>
             {/* ── Dashboard ─────────────────────────────────────────────────────── */}
-            {tab === "dashboard" && data && (
-              <div className="space-y-8">
-                <div>
-                  <h1 className="font-display text-xl font-bold text-[#0C1222] tracking-tight mb-1">Dashboard</h1>
-                  <p className="text-sm text-slate-500">
-                    Knowledge Base auto-populated from HubSpot
-                  </p>
-                </div>
-
-                <StatsGrid stats={data.stats} />
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  {/* Category distribution */}
-                  <div>
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">
-                        Categories
-                      </h2>
-                      <button
-                        onClick={() => setTab("kb")}
-                        className="text-xs text-mint-600 hover:text-mint-800 font-medium"
-                      >
-                        View all →
-                      </button>
-                    </div>
-                    <CategoryGrid
-                      categories={data.categories.slice(0, 8)}
-                      onSelect={() => setTab("kb")}
-                    />
-                  </div>
-
-                  {/* Recent Q&A */}
-                  <div>
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">
-                        Recent Q&A
-                      </h2>
-                      <button
-                        onClick={() => setTab("kb")}
-                        className="text-xs text-mint-600 hover:text-mint-800 font-medium"
-                      >
-                        Search →
-                      </button>
-                    </div>
-                    {data.recent_qa.length === 0 ? (
-                      <div className="text-center py-12 text-slate-400 bg-white rounded-xl border border-slate-200">
-                        <p className="text-sm">No data yet.</p>
-                        <button
-                          onClick={() => setTab("pipeline")}
-                          className="mt-2 text-xs text-mint-600 hover:underline"
-                        >
-                          Run the pipeline →
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {data.recent_qa.slice(0, 4).map((qa) => (
-                          <QACard key={qa.id} qa={qa} />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+            {tab === "dashboard" && (
+              <InsightsDashboard userRole={user?.role ?? null} />
             )}
 
             {/* ── Knowledge Base ────────────────────────────────────────────────── */}

@@ -27,7 +27,7 @@ export interface PipelineStats {
 }
 
 export interface PipelineOptions {
-  mode: "incremental" | "full" | "recluster" | "test" | "scrape-kb" | "extract-loom";
+  mode: "incremental" | "full" | "recluster" | "test" | "scrape-kb" | "extract-loom" | "backfill-associations" | "backfill-root-cause";
   testLimit?: number;
   onProgress?: (event: PipelineEvent) => void;
 }
@@ -64,6 +64,71 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
     stats.reclustered = true;
     stats.categories_total = repo.getAllCategories().length;
     log(`✓ Re-clustering completed: ${stats.categories_total} categories`);
+    emit({ type: "done", stats });
+    return stats;
+  }
+
+  // ── Backfill associations: fetch HubSpot contact + company for tickets missing them ─
+  if (mode === "backfill-associations") {
+    log("Starting customer-info backfill...");
+    const targets = repo.getTicketsMissingAssociations();
+    if (targets.length === 0) {
+      log("No tickets missing customer info. Nothing to backfill.");
+      emit({ type: "done", stats });
+      return stats;
+    }
+    log(`Found ${targets.length} tickets missing customer info.`);
+    let done = 0;
+    await poolMap(targets, async (t) => {
+      try {
+        const assoc = await hubspot.getTicketAssociations(t.hubspot_id);
+        repo.setTicketAssociations(t.id, assoc);
+        if (assoc.contact_email || assoc.company_name) {
+          log(`  ✓ ${t.hubspot_id} → ${assoc.company_name ?? "(no company)"} / ${assoc.contact_email ?? "(no email)"}`);
+        }
+      } catch (err) {
+        stats.errors++;
+        log(`  ✗ ${t.hubspot_id}: ${err}`);
+      } finally {
+        done++;
+        emit({ type: "progress", current: done, total: targets.length, message: `Backfilling ${done}/${targets.length}` });
+      }
+    });
+    stats.tickets_fetched = targets.length;
+    log(`✓ Backfill complete: ${done} processed, ${stats.errors} errors`);
+    emit({ type: "done", stats });
+    return stats;
+  }
+
+  // ── Backfill root cause: AI-classify qa_pairs that don't have a root_cause ─
+  if (mode === "backfill-root-cause") {
+    log("Starting root-cause backfill (AI classification)...");
+    const targets = repo.getQAPairsMissingRootCause();
+    if (targets.length === 0) {
+      log("No qa_pairs missing root_cause. Nothing to backfill.");
+      emit({ type: "done", stats });
+      return stats;
+    }
+    log(`Found ${targets.length} qa_pairs missing root_cause.`);
+    let done = 0;
+    await poolMap(targets, async (qa) => {
+      try {
+        const rc = await extractor.classifyRootCause({
+          question: qa.question,
+          answer: qa.answer,
+          summary: qa.summary,
+        });
+        repo.updateQAPair(qa.id, { root_cause: rc });
+      } catch (err) {
+        stats.errors++;
+        log(`  ✗ qa_pair ${qa.id}: ${err}`);
+      } finally {
+        done++;
+        emit({ type: "progress", current: done, total: targets.length, message: `Classifying ${done}/${targets.length}` });
+      }
+    });
+    stats.qa_extracted = done;
+    log(`✓ Root-cause backfill complete: ${done} classified, ${stats.errors} errors`);
     emit({ type: "done", stats });
     return stats;
   }
@@ -364,10 +429,16 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
   // ── 2. Save to DB ─────────────────────────────────────────────────────────
   log("Saving tickets to database...");
   let newCount = 0;
+  // Collect new tickets for inline association fetch (existing tickets are
+  // handled by the dedicated backfill-associations mode — keeps this loop fast)
+  const newRawTickets: typeof rawTickets = [];
   for (const raw of rawTickets) {
     const props = raw.properties;
     const existing = repo.getTicketByHubspotId(raw.id);
-    if (!existing) newCount++;
+    if (!existing) {
+      newCount++;
+      newRawTickets.push(raw);
+    }
 
     repo.upsertTicket({
       hubspot_id: raw.id,
@@ -382,6 +453,25 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
   }
   stats.tickets_new = newCount;
   log(`✓ ${newCount} new tickets saved`);
+
+  // Fetch HubSpot associations only for newly-inserted tickets — fast path.
+  // Run `backfill-associations` to populate associations for older tickets.
+  if (newRawTickets.length > 0) {
+    log(`Fetching customer info for ${newRawTickets.length} new ticket(s)...`);
+    let assocDone = 0;
+    await poolMap(newRawTickets, async (raw) => {
+      try {
+        const assoc = await hubspot.getTicketAssociations(raw.id);
+        const t = repo.getTicketByHubspotId(raw.id);
+        if (t) repo.setTicketAssociations(t.id, assoc);
+      } catch { /* non-blocking */ }
+      finally {
+        assocDone++;
+        emit({ type: "progress", current: assocDone, total: newRawTickets.length, message: `Customer info ${assocDone}/${newRawTickets.length}` });
+      }
+    });
+    log(`✓ Customer info fetched for ${assocDone} ticket(s)`);
+  }
 
   // ── 3. Process unprocessed tickets (concurrent) ──────────────────────────
   const unprocessed = repo.getUnprocessedTickets();
@@ -439,6 +529,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
             resolution_steps: m.resolution_steps.length > 0 ? JSON.stringify(m.resolution_steps) : null,
             summary: m.summary,
             resolved: m.resolved ? 1 : 0,
+            root_cause: qa.root_cause,
           });
           qaPairId = mergeResult.merge_target_id;
           actionLabel = "Merged";
@@ -453,6 +544,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
             summary: qa.summary,
             resolved: qa.resolved,
             channel: qa.channel || ticket.channel,
+            root_cause: qa.root_cause,
           });
           qaPairId = qaPair.id;
           actionLabel = "Created";
@@ -468,6 +560,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
           summary: qa.summary,
           resolved: qa.resolved,
           channel: qa.channel || ticket.channel,
+          root_cause: qa.root_cause,
         });
         qaPairId = qaPair.id;
         actionLabel = "Created";

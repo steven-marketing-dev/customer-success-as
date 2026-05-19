@@ -1,4 +1,20 @@
-import { generateJSONMultimodal } from "./provider";
+import { generateJSON, generateJSONMultimodal } from "./provider";
+import type { RootCause } from "../db/index";
+
+const ROOT_CAUSES: readonly RootCause[] = [
+  "ui_friction",
+  "onboarding_gap",
+  "platform_bug",
+  "feature_request",
+  "how_to",
+  "billing",
+  "other",
+] as const;
+
+function coerceRootCause(raw: unknown): RootCause {
+  const v = String(raw ?? "").trim().toLowerCase();
+  return (ROOT_CAUSES as readonly string[]).includes(v) ? (v as RootCause) : "other";
+}
 
 export interface ExtractedQA {
   question: string;
@@ -9,6 +25,7 @@ export interface ExtractedQA {
   resolved: boolean;
   channel: string;
   summary: string;
+  root_cause: RootCause;
 }
 
 const SYSTEM = `You are an expert Customer Success analyst.
@@ -42,7 +59,8 @@ Return this exact JSON:
   ],
   "resolved": true,
   "channel": "email",
-  "summary": "Summary in 1-2 sentences"
+  "summary": "Summary in 1-2 sentences",
+  "root_cause": "ui_friction"
 }
 
 Rules:
@@ -51,6 +69,14 @@ Rules:
 - answer: the complete resolution narrative, include all technical details, exact values, settings, and steps. null if unresolved.
 - resolution_steps: ordered list of the concrete actions taken by the support agent to resolve the issue. Be specific and actionable — include exact configurations, commands, URLs, or settings used. Empty array if unresolved.
 - channel: email | chat | phone | web_form | unknown
+- root_cause: pick exactly ONE of these seven values:
+    - "ui_friction": the user struggles with an existing UI flow (couldn't find a button, confusing layout, unclear labels)
+    - "onboarding_gap": the user doesn't understand how the platform fundamentally works (missing mental model, not a specific UI issue)
+    - "platform_bug": something is broken or behaving unexpectedly (errors, crashes, data wrong)
+    - "feature_request": the user wants something the product doesn't currently do
+    - "how_to": a straightforward "how do I do X?" question that documentation could answer
+    - "billing": invoicing, plan changes, payments, refunds
+    - "other": doesn't fit any of the above
 - Return ONLY the JSON`;
 };
 
@@ -64,6 +90,35 @@ export class QAExtractor {
     const prompt = buildPrompt(subject, content, conversation);
     const raw = await generateJSONMultimodal(SYSTEM, prompt, images);
     return this.parse(raw);
+  }
+
+  /** Lightweight backfill helper — classifies root_cause for an existing qa_pair.
+   *  Uses the cheap Haiku tier (default for generateJSON without smart=true). */
+  async classifyRootCause(qa: { question: string; answer: string | null; summary: string | null }): Promise<RootCause> {
+    const prompt = `Classify the following support Q&A by its root cause.
+
+Question: ${qa.question}
+Answer: ${qa.answer ?? "(unresolved)"}
+Summary: ${qa.summary ?? ""}
+
+Pick exactly ONE value from this list and return JSON of the form {"root_cause": "..."}:
+- "ui_friction": user struggles with an existing UI flow (couldn't find a button, confusing layout)
+- "onboarding_gap": user doesn't understand how the platform fundamentally works
+- "platform_bug": something is broken or behaving unexpectedly
+- "feature_request": user wants something the product doesn't do
+- "how_to": straightforward "how do I do X?" question, doc-answerable
+- "billing": invoicing, plan, payment
+- "other": fallback when nothing else fits
+
+Return ONLY the JSON.`;
+    try {
+      const raw = await generateJSON(SYSTEM, prompt);
+      const cleaned = raw.trim().replace(/^```(?:json)?\s*/m, "").replace(/\s*```$/m, "");
+      const data = JSON.parse(cleaned);
+      return coerceRootCause(data.root_cause);
+    } catch {
+      return "other";
+    }
   }
 
   private parse(raw: string): ExtractedQA {
@@ -87,6 +142,7 @@ export class QAExtractor {
       resolved: Boolean(data.resolved),
       channel: String(data.channel ?? "unknown"),
       summary: String(data.summary ?? "").trim(),
+      root_cause: coerceRootCause(data.root_cause),
     };
   }
 }

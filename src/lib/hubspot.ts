@@ -49,6 +49,40 @@ interface ConversationMessage {
   created_at: string;
 }
 
+/** Detect HubSpot 429 (search endpoint is capped at ~4 req/sec on most plans). */
+function is429(err: unknown): boolean {
+  if (!err) return false;
+  const e = err as { code?: number; statusCode?: number; status?: number; response?: { status?: number } };
+  if (e.code === 429 || e.statusCode === 429 || e.status === 429 || e.response?.status === 429) return true;
+  return /HTTP-Code:\s*429|"status":\s*429|\b429\b/.test(String(err));
+}
+
+/** Parse Retry-After header from a HubSpot error if present. Returns ms, or null. */
+function retryAfterMs(err: unknown): number | null {
+  const headers = (err as { headers?: Record<string, string | string[]> }).headers;
+  if (!headers) return null;
+  const raw = headers["retry-after"] ?? headers["Retry-After"];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value) return null;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) ? Math.max(seconds, 1) * 1000 : null;
+}
+
+/** Retry on 429 with exponential backoff (1s, 3s, 9s) — respects Retry-After when present. */
+async function withRetry429<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!is429(err) || attempt === maxRetries) throw err;
+      const headerDelay = retryAfterMs(err);
+      const backoff = headerDelay ?? Math.min(1000 * Math.pow(3, attempt), 30000);
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
+  throw new Error("Unreachable");
+}
+
 export class HubSpotClient {
   private client: Client;
   private accessToken: string;
@@ -89,13 +123,13 @@ export class HubSpotClient {
     if (closedOnly) {
       filters.push({ propertyName: "hs_pipeline_stage", operator: FilterOperatorEnum.Eq, value: "4" });
     }
-    const res = await this.client.crm.tickets.searchApi.doSearch({
+    const res = await withRetry429(() => this.client.crm.tickets.searchApi.doSearch({
       filterGroups: [{ filters }],
       properties: TICKET_PROPERTIES,
       sorts: [],
       limit: 50,
       after: after ?? "",
-    });
+    }));
 
     return {
       results: res.results.map((t) => ({ id: t.id, properties: t.properties as Record<string, string | null> })),
@@ -113,13 +147,13 @@ export class HubSpotClient {
     if (closedOnly) {
       filters.push({ propertyName: "hs_pipeline_stage", operator: FilterOperatorEnum.Eq, value: "4" });
     }
-    const res = await this.client.crm.tickets.searchApi.doSearch({
+    const res = await withRetry429(() => this.client.crm.tickets.searchApi.doSearch({
       filterGroups: [{ filters }],
       properties: TICKET_PROPERTIES,
       sorts: [],
       limit: 50,
       after: after ?? "",
-    });
+    }));
 
     return {
       results: res.results.map((t) => ({ id: t.id, properties: t.properties as Record<string, string | null> })),
@@ -305,6 +339,60 @@ export class HubSpotClient {
     } catch {
       return [];
     }
+  }
+
+  /** Fetch the primary contact + company associated with a ticket.
+   *  Returns nulls for any field we couldn't resolve — never throws. */
+  async getTicketAssociations(ticketId: string): Promise<{
+    contact_id: string | null;
+    contact_email: string | null;
+    contact_name: string | null;
+    company_id: string | null;
+    company_name: string | null;
+  }> {
+    let contact_id: string | null = null;
+    let contact_email: string | null = null;
+    let contact_name: string | null = null;
+    let company_id: string | null = null;
+    let company_name: string | null = null;
+
+    try {
+      const contactIds = await this.getAssociatedIds(ticketId, "contacts");
+      if (contactIds[0]) {
+        contact_id = contactIds[0];
+        const res = await fetch(
+          `https://api.hubapi.com/crm/v3/objects/contacts/${contact_id}?properties=email,firstname,lastname`,
+          { headers: { Authorization: `Bearer ${this.accessToken}` } }
+        );
+        if (res.ok) {
+          const data = await res.json() as { properties?: Record<string, string | null> };
+          const props = data.properties ?? {};
+          contact_email = props.email ?? null;
+          const first = props.firstname ?? "";
+          const last = props.lastname ?? "";
+          const fullName = `${first} ${last}`.trim();
+          contact_name = fullName || null;
+        }
+      }
+    } catch { /* leave contact fields null */ }
+
+    try {
+      const companyIds = await this.getAssociatedIds(ticketId, "companies");
+      if (companyIds[0]) {
+        company_id = companyIds[0];
+        const res = await fetch(
+          `https://api.hubapi.com/crm/v3/objects/companies/${company_id}?properties=name,domain`,
+          { headers: { Authorization: `Bearer ${this.accessToken}` } }
+        );
+        if (res.ok) {
+          const data = await res.json() as { properties?: Record<string, string | null> };
+          const props = data.properties ?? {};
+          company_name = props.name ?? props.domain ?? null;
+        }
+      }
+    } catch { /* leave company fields null */ }
+
+    return { contact_id, contact_email, contact_name, company_id, company_name };
   }
 
   private async getThreadMessages(threadId: string): Promise<ConversationResult> {
