@@ -700,31 +700,66 @@ export class Repository {
 
   upsertKBArticle(data: {
     url: string;
+    source_id: number | null;
     title: string;
     content: string;
     category: string | null;
     content_hash: string;
   }): { action: "created" | "updated" | "unchanged"; articleId: number } {
-    const existing = this.db
-      .prepare("SELECT id, content_hash FROM kb_articles WHERE url = ?")
-      .get(data.url) as { id: number; content_hash: string } | undefined;
+    // Identity priority: source_id (stable across slug changes) → url (legacy fallback).
+    let existing: { id: number; content_hash: string; url: string; source_id: number | null } | undefined;
+    if (data.source_id != null) {
+      existing = this.db
+        .prepare("SELECT id, content_hash, url, source_id FROM kb_articles WHERE source_id = ?")
+        .get(data.source_id) as typeof existing;
+    }
+    if (!existing) {
+      existing = this.db
+        .prepare("SELECT id, content_hash, url, source_id FROM kb_articles WHERE url = ?")
+        .get(data.url) as typeof existing;
+    }
 
     if (existing) {
-      if (existing.content_hash === data.content_hash) return { action: "unchanged", articleId: existing.id };
+      const urlChanged = existing.url !== data.url;
+      const sourceIdChanged = existing.source_id !== data.source_id && data.source_id != null;
+      if (existing.content_hash === data.content_hash && !urlChanged && !sourceIdChanged) {
+        return { action: "unchanged", articleId: existing.id };
+      }
       this.db
         .prepare(
-          `UPDATE kb_articles SET title=?, content=?, category=?, content_hash=?, scraped_at=unixepoch() WHERE id=?`
+          `UPDATE kb_articles SET url=?, source_id=COALESCE(?, source_id), title=?, content=?, category=?, content_hash=?, scraped_at=unixepoch() WHERE id=?`
         )
-        .run(data.title, data.content, data.category, data.content_hash, existing.id);
+        .run(data.url, data.source_id, data.title, data.content, data.category, data.content_hash, existing.id);
       return { action: "updated", articleId: existing.id };
     }
 
     const info = this.db
       .prepare(
-        `INSERT INTO kb_articles (url, title, content, category, content_hash) VALUES (?, ?, ?, ?, ?)`
+        `INSERT INTO kb_articles (url, source_id, title, content, category, content_hash) VALUES (?, ?, ?, ?, ?, ?)`
       )
-      .run(data.url, data.title, data.content, data.category, data.content_hash);
+      .run(data.url, data.source_id, data.title, data.content, data.category, data.content_hash);
     return { action: "created", articleId: Number(info.lastInsertRowid) };
+  }
+
+  /** Rows that pre-date the source_id column — used by the scraper's one-time backfill. */
+  getKBArticlesMissingSourceId(): Array<{ id: number; url: string }> {
+    return this.db
+      .prepare("SELECT id, url FROM kb_articles WHERE source_id IS NULL")
+      .all() as Array<{ id: number; url: string }>;
+  }
+
+  /** Stamp source_id onto a legacy row. Returns false if another row already owns that source_id. */
+  setKBArticleSourceId(articleId: number, sourceId: number): boolean {
+    try {
+      this.db.prepare("UPDATE kb_articles SET source_id=? WHERE id=?").run(sourceId, articleId);
+      return true;
+    } catch {
+      return false; // unique constraint — another row already has this source_id
+    }
+  }
+
+  deleteKBArticle(articleId: number): void {
+    this.db.prepare("DELETE FROM kb_articles WHERE id=?").run(articleId);
   }
 
   getAllKBArticles(): KBArticle[] {

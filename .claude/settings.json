@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsx -e \":*)"
+      "Bash(npx tsx -e \":*)",
+      "Skill(codex:rescue)",
+      "Skill(codex:rescue:*)",
+      "Skill(codex:review)",
+      "Skill(codex:review:*)"
     ]
   }
 }

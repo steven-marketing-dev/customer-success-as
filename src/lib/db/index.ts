@@ -100,6 +100,7 @@ export interface Term {
 export interface KBArticle {
   id: number;
   url: string;
+  source_id: number | null;
   title: string;
   content: string;
   category: string | null;
@@ -594,10 +595,16 @@ function initDb(db: Database.Database) {
     "ALTER TABLE tickets ADD COLUMN company_id TEXT",
     "ALTER TABLE tickets ADD COLUMN company_name TEXT",
     "ALTER TABLE qa_pairs ADD COLUMN root_cause TEXT",
+    "ALTER TABLE kb_articles ADD COLUMN source_id INTEGER",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }
   }
+
+  // Unique index on source_id (NULLs allowed for legacy rows pending backfill).
+  try {
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_articles_source_id ON kb_articles(source_id) WHERE source_id IS NOT NULL");
+  } catch { /* index already exists */ }
 
   // --- FTS5 full-text search indexes ---
   // External-content FTS5: reads directly from source tables via content= option.
