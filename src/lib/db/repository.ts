@@ -759,6 +759,9 @@ export class Repository {
   }
 
   deleteKBArticle(articleId: number): void {
+    // process_cards.source_id has no FK — clean up manually to avoid stale pointers.
+    this.db.prepare("DELETE FROM process_cards WHERE source_type='article' AND source_id=?").run(articleId);
+    // term_article_map cascades via FK.
     this.db.prepare("DELETE FROM kb_articles WHERE id=?").run(articleId);
   }
 

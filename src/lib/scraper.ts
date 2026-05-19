@@ -80,7 +80,10 @@ async function scrapeArticle(url: string): Promise<FetchOutcome> {
         const title = article.title || "";
         const htmlContent: string = article.content || "";
         const lead: string = article.lead || "";
-        const sourceId = typeof article.id === "number" ? article.id : null;
+        // `articleId` is the stable parent-entity id; `id` is the row/revision id that changes on edit.
+        const rawId = article.articleId ?? article.id;
+        const parsedId = typeof rawId === "number" ? rawId : typeof rawId === "string" ? parseInt(rawId, 10) : NaN;
+        const sourceId = Number.isFinite(parsedId) ? parsedId : null;
 
         // Convert HTML content to plain text
         const $content = cheerio.load(htmlContent);
@@ -180,7 +183,8 @@ export async function runScrape(
   if (legacy.length > 0) {
     emit({ type: "log", message: `Backfilling source_id for ${legacy.length} legacy article(s)...` });
     let backfilled = 0;
-    let gone = 0;
+    let deleted = 0;
+    let collisions = 0;
     await poolMap(
       legacy,
       async (row) => {
@@ -188,20 +192,26 @@ export async function runScrape(
           const outcome = await scrapeArticle(row.url);
           if (!outcome.ok) {
             if (outcome.status === 404 || outcome.status === 410) {
-              gone++;
-              emit({ type: "log", message: `⚠ Stale (${outcome.status}), no source_id available: ${row.url}` });
+              repo.deleteKBArticle(row.id);
+              deleted++;
+              emit({ type: "log", message: `🗑 Deleted stale (${outcome.status}): ${row.url}` });
             }
             return;
           }
           if (outcome.article.sourceId == null) return;
-          if (repo.setKBArticleSourceId(row.id, outcome.article.sourceId)) backfilled++;
+          if (repo.setKBArticleSourceId(row.id, outcome.article.sourceId)) {
+            backfilled++;
+          } else {
+            collisions++;
+            emit({ type: "log", message: `⚠ source_id ${outcome.article.sourceId} already owned by another row — manual merge needed for: ${row.url}` });
+          }
         } catch {
           // Network hiccups: skip; next run will retry.
         }
       },
       CONCURRENCY,
     );
-    emit({ type: "log", message: `Backfill done: ${backfilled} stamped, ${gone} 404/410 (left in place for manual review)` });
+    emit({ type: "log", message: `Backfill done: ${backfilled} stamped, ${deleted} deleted (404/410), ${collisions} collisions` });
   }
 
   emit({ type: "log", message: "Fetching sitemap..." });
