@@ -1,6 +1,10 @@
 import type Database from "better-sqlite3";
 import crypto from "crypto";
-import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion, type GmailToken, type WidgetInstallation, type WidgetRating, type ClarityMetric } from "./index";
+import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion, type GmailToken, type WidgetInstallation, type WidgetRating, type WidgetQuestion, type WidgetArticleClick, type ClarityMetric } from "./index";
+
+function normalizeQuestion(q: string): string {
+  return q.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, " ").trim().slice(0, 200);
+}
 
 export class Repository {
   private db: Database.Database;
@@ -1599,6 +1603,197 @@ export class Repository {
       "SELECT COUNT(*) as n FROM widget_rate_events WHERE installation_id = ? AND ip_hash = ? AND created_at >= unixepoch() - 3600"
     ).get(installationId, ipHash) as { n: number };
     return row.n;
+  }
+
+  // ─── Widget Analytics: questions & article clicks ──────────────────────────
+
+  insertWidgetQuestion(data: {
+    installation_id: number;
+    exchange_id: string;
+    question: string;
+    answer: string;
+    articles: Array<{ id: number; title: string; url: string }>;
+    ip_hash: string;
+  }): number | null {
+    try {
+      const info = this.db.prepare(
+        `INSERT INTO widget_questions (installation_id, exchange_id, question, question_norm, answer, articles_json, ip_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        data.installation_id,
+        data.exchange_id,
+        data.question.slice(0, 4000),
+        normalizeQuestion(data.question),
+        data.answer.slice(0, 8000),
+        JSON.stringify(data.articles ?? []),
+        data.ip_hash,
+      );
+      return Number(info.lastInsertRowid);
+    } catch {
+      // UNIQUE(installation_id, exchange_id) collision — already logged
+      const row = this.db.prepare(
+        "SELECT id FROM widget_questions WHERE installation_id = ? AND exchange_id = ?"
+      ).get(data.installation_id, data.exchange_id) as { id: number } | undefined;
+      return row?.id ?? null;
+    }
+  }
+
+  insertWidgetArticleClick(data: {
+    installation_id: number;
+    question_id: number | null;
+    article_id: number | null;
+    article_title: string;
+    article_url: string;
+    ip_hash: string;
+  }): void {
+    this.db.prepare(
+      `INSERT INTO widget_article_clicks (installation_id, question_id, article_id, article_title, article_url, ip_hash)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      data.installation_id,
+      data.question_id,
+      data.article_id,
+      data.article_title.slice(0, 500),
+      data.article_url.slice(0, 1000),
+      data.ip_hash,
+    );
+  }
+
+  getTopWidgetQuestions(installationId: number, sinceTs: number, limit = 10): Array<{
+    question_norm: string;
+    sample_question: string;
+    count: number;
+    last_asked_at: number;
+  }> {
+    return this.db.prepare(`
+      SELECT question_norm,
+        (SELECT question FROM widget_questions wq2
+          WHERE wq2.installation_id = wq.installation_id AND wq2.question_norm = wq.question_norm
+          ORDER BY created_at DESC LIMIT 1) as sample_question,
+        COUNT(*) as count,
+        MAX(created_at) as last_asked_at
+      FROM widget_questions wq
+      WHERE installation_id = ? AND created_at >= ?
+      GROUP BY question_norm
+      ORDER BY count DESC, last_asked_at DESC
+      LIMIT ?
+    `).all(installationId, sinceTs, limit) as Array<{
+      question_norm: string;
+      sample_question: string;
+      count: number;
+      last_asked_at: number;
+    }>;
+  }
+
+  getTopWidgetArticleClicks(installationId: number, sinceTs: number, limit = 10): Array<{
+    article_url: string;
+    article_title: string;
+    clicks: number;
+    last_clicked_at: number;
+  }> {
+    return this.db.prepare(`
+      SELECT article_url,
+        (SELECT article_title FROM widget_article_clicks c2
+          WHERE c2.installation_id = c.installation_id AND c2.article_url = c.article_url
+          ORDER BY created_at DESC LIMIT 1) as article_title,
+        COUNT(*) as clicks,
+        MAX(created_at) as last_clicked_at
+      FROM widget_article_clicks c
+      WHERE installation_id = ? AND created_at >= ?
+      GROUP BY article_url
+      ORDER BY clicks DESC, last_clicked_at DESC
+      LIMIT ?
+    `).all(installationId, sinceTs, limit) as Array<{
+      article_url: string;
+      article_title: string;
+      clicks: number;
+      last_clicked_at: number;
+    }>;
+  }
+
+  getWidgetVolumeByDay(installationId: number, days: number): Array<{
+    day: string;
+    questions: number;
+    ratings: number;
+    clicks: number;
+  }> {
+    const sinceTs = Math.floor(Date.now() / 1000) - days * 86400;
+    const rows = this.db.prepare(`
+      WITH days AS (
+        SELECT date('now', '-' || x.n || ' days') as day
+        FROM (
+          WITH RECURSIVE seq(n) AS (SELECT 0 UNION ALL SELECT n+1 FROM seq WHERE n < ?)
+          SELECT n FROM seq
+        ) x
+      )
+      SELECT d.day,
+        (SELECT COUNT(*) FROM widget_questions WHERE installation_id = ? AND created_at >= ?
+          AND date(created_at, 'unixepoch') = d.day) as questions,
+        (SELECT COUNT(*) FROM widget_ratings WHERE installation_id = ? AND created_at >= ?
+          AND date(created_at, 'unixepoch') = d.day) as ratings,
+        (SELECT COUNT(*) FROM widget_article_clicks WHERE installation_id = ? AND created_at >= ?
+          AND date(created_at, 'unixepoch') = d.day) as clicks
+      FROM days d
+      ORDER BY d.day ASC
+    `).all(days - 1, installationId, sinceTs, installationId, sinceTs, installationId, sinceTs) as Array<{
+      day: string;
+      questions: number;
+      ratings: number;
+      clicks: number;
+    }>;
+    return rows;
+  }
+
+  getWidgetRatingBreakdown(installationId: number, sinceTs: number): {
+    total: number;
+    avg: number | null;
+    by_rating: { 1: number; 2: number; 3: number };
+  } {
+    const rows = this.db.prepare(`
+      SELECT rating, COUNT(*) as n FROM widget_ratings
+      WHERE installation_id = ? AND created_at >= ?
+      GROUP BY rating
+    `).all(installationId, sinceTs) as Array<{ rating: 1 | 2 | 3; n: number }>;
+    const by: { 1: number; 2: number; 3: number } = { 1: 0, 2: 0, 3: 0 };
+    let total = 0;
+    let weighted = 0;
+    for (const r of rows) {
+      by[r.rating] = r.n;
+      total += r.n;
+      weighted += r.rating * r.n;
+    }
+    return { total, avg: total > 0 ? weighted / total : null, by_rating: by };
+  }
+
+  getWidgetRatingsFeed(installationId: number, sinceTs: number, opts: {
+    ratingFilter?: 1 | 2 | 3 | null;
+    limit?: number;
+  } = {}): WidgetRating[] {
+    const limit = opts.limit ?? 50;
+    if (opts.ratingFilter) {
+      return this.db.prepare(
+        `SELECT * FROM widget_ratings
+         WHERE installation_id = ? AND created_at >= ? AND rating = ?
+         ORDER BY created_at DESC LIMIT ?`
+      ).all(installationId, sinceTs, opts.ratingFilter, limit) as WidgetRating[];
+    }
+    return this.db.prepare(
+      `SELECT * FROM widget_ratings
+       WHERE installation_id = ? AND created_at >= ?
+       ORDER BY created_at DESC LIMIT ?`
+    ).all(installationId, sinceTs, limit) as WidgetRating[];
+  }
+
+  getWidgetQuestionRow(installationId: number, exchangeId: string): WidgetQuestion | undefined {
+    return this.db.prepare(
+      "SELECT * FROM widget_questions WHERE installation_id = ? AND exchange_id = ?"
+    ).get(installationId, exchangeId) as WidgetQuestion | undefined;
+  }
+
+  listWidgetArticleClicksForQuestion(questionId: number): WidgetArticleClick[] {
+    return this.db.prepare(
+      "SELECT * FROM widget_article_clicks WHERE question_id = ? ORDER BY created_at DESC"
+    ).all(questionId) as WidgetArticleClick[];
   }
 
   // ─── Insights / Dashboard ─────────────────────────────────────────────────

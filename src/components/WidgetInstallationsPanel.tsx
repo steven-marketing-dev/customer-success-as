@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Copy, Check, Trash2, Pencil, X, ExternalLink, Star } from "lucide-react";
+import { Plus, Copy, Check, Trash2, Pencil, X, ExternalLink, Star, BarChart3 } from "lucide-react";
+import { WidgetAnalyticsModal } from "./WidgetAnalyticsModal";
 
 interface Installation {
   id: number;
@@ -69,6 +70,7 @@ export function WidgetInstallationsPanel() {
   const [form, setForm] = useState<EditForm>(emptyForm);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [analyticsFor, setAnalyticsFor] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -172,13 +174,13 @@ export function WidgetInstallationsPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 max-w-2xl">
           <h1 className="font-display text-xl font-bold text-[#0C1222] tracking-tight mb-1">Widget Installations</h1>
-          <p className="text-sm text-slate-500">Embed the agent chat into your client products. Each installation has its own key, origin allowlist, and usage stats.</p>
+          <p className="text-sm text-slate-500">Embed the agent chat into your client products.</p>
         </div>
         {!showForm && (
-          <button onClick={startCreate} className="flex items-center gap-1.5 rounded-lg bg-mint-600 px-3 py-2 text-sm font-medium text-white hover:bg-mint-700">
+          <button onClick={startCreate} className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-mint-600 px-3 py-2 text-sm font-medium text-white hover:bg-mint-700 whitespace-nowrap">
             <Plus size={14} />New installation
           </button>
         )}
@@ -363,6 +365,9 @@ export function WidgetInstallationsPanel() {
                   </div>
 
                   <div className="flex items-center gap-1 flex-shrink-0">
+                    <button onClick={() => setAnalyticsFor(i.id)} className="p-1.5 rounded hover:bg-mint-50 text-slate-500 hover:text-mint-700" title="Analytics">
+                      <BarChart3 size={14} />
+                    </button>
                     <button onClick={() => startEdit(i)} className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-800" title="Edit">
                       <Pencil size={14} />
                     </button>
@@ -375,6 +380,13 @@ export function WidgetInstallationsPanel() {
             );
           })}
         </div>
+      )}
+
+      {analyticsFor != null && (
+        <WidgetAnalyticsModal
+          installationId={analyticsFor}
+          onClose={() => setAnalyticsFor(null)}
+        />
       )}
     </div>
   );

@@ -20,6 +20,7 @@ interface Message {
   content: string;
   articles?: ArticleRef[];
   exchangeId?: string;
+  questionId?: number | null;
   streaming?: boolean;
   rating?: number | null;
 }
@@ -41,6 +42,32 @@ const DEFAULT_COLOR = "#0d9488";
 
 function postToParent(payload: Record<string, unknown>) {
   try { window.parent?.postMessage({ source: "cs-widget", ...payload }, "*"); } catch { /* */ }
+}
+
+function reportArticleClick(widgetKey: string, questionId: number | null, article: ArticleRef): void {
+  if (!widgetKey) return;
+  const url = `/api/widget/article-click?key=${encodeURIComponent(widgetKey)}`;
+  const body = JSON.stringify({
+    questionId,
+    articleId: article.id,
+    title: article.title,
+    url: article.url,
+  });
+  try {
+    if (typeof navigator !== "undefined" && navigator.sendBeacon) {
+      // Beacon is fire-and-forget — survives the page nav from target="_blank"
+      navigator.sendBeacon(url, new Blob([body], { type: "application/json" }));
+      return;
+    }
+  } catch { /* fall through to fetch */ }
+  try {
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      keepalive: true,
+    }).catch(() => { /* */ });
+  } catch { /* */ }
 }
 
 export function ChatEmbed() {
@@ -337,6 +364,7 @@ function ChatView({ widgetKey, color, productName }: {
                   content: event.answer,
                   articles: event.articles ?? [],
                   exchangeId: event.exchangeId,
+                  questionId: event.questionId ?? null,
                   streaming: false,
                 };
                 return next;
@@ -473,6 +501,7 @@ function MessageBubble({ msg, color, widgetKey, userQuestion }: { msg: Message; 
                 href={a.url}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => reportArticleClick(widgetKey, msg.questionId ?? null, a)}
                 className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 transition-colors text-slate-700"
               >
                 <ExternalLink size={11} className="flex-shrink-0 text-slate-400" />

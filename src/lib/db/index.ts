@@ -262,6 +262,29 @@ export interface WidgetRateEvent {
   created_at: number;
 }
 
+export interface WidgetQuestion {
+  id: number;
+  installation_id: number;
+  exchange_id: string;
+  question: string;
+  question_norm: string;
+  answer: string;
+  articles_json: string; // JSON array of {id,title,url}
+  ip_hash: string;
+  created_at: number;
+}
+
+export interface WidgetArticleClick {
+  id: number;
+  installation_id: number;
+  question_id: number | null;
+  article_id: number | null;
+  article_title: string;
+  article_url: string;
+  ip_hash: string;
+  created_at: number;
+}
+
 // Singleton DB connection
 
 declare global {
@@ -541,6 +564,34 @@ function initDb(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_widget_rate_events_install_created ON widget_rate_events(installation_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_widget_rate_events_ip_created ON widget_rate_events(ip_hash, created_at);
+
+    CREATE TABLE IF NOT EXISTS widget_questions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      installation_id INTEGER NOT NULL REFERENCES widget_installations(id) ON DELETE CASCADE,
+      exchange_id TEXT NOT NULL,
+      question TEXT NOT NULL,
+      question_norm TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      articles_json TEXT NOT NULL DEFAULT '[]',
+      ip_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_widget_questions_install_created ON widget_questions(installation_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_widget_questions_install_norm ON widget_questions(installation_id, question_norm);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_widget_questions_exchange ON widget_questions(installation_id, exchange_id);
+
+    CREATE TABLE IF NOT EXISTS widget_article_clicks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      installation_id INTEGER NOT NULL REFERENCES widget_installations(id) ON DELETE CASCADE,
+      question_id INTEGER REFERENCES widget_questions(id) ON DELETE SET NULL,
+      article_id INTEGER,
+      article_title TEXT NOT NULL,
+      article_url TEXT NOT NULL,
+      ip_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_widget_article_clicks_install_created ON widget_article_clicks(installation_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_widget_article_clicks_install_url ON widget_article_clicks(installation_id, article_url);
 
     CREATE TABLE IF NOT EXISTS gmail_tokens (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

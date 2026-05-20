@@ -257,9 +257,22 @@ ${context}
         const doneArticles = citedArticles.map((a) => ({ id: a.id, title: a.title, url: a.url, category: a.category }));
         const doneVideos = citedVideos.map((v) => ({ id: v.id, title: v.title, loom_url: v.loom_url, summary: v.summary }));
 
+        let questionId: number | null = null;
+        try {
+          questionId = repo.insertWidgetQuestion({
+            installation_id: installation.id,
+            exchange_id: exchangeId,
+            question,
+            answer: cleanAnswer,
+            articles: doneArticles.map((a) => ({ id: a.id, title: a.title, url: a.url })),
+            ip_hash: ipHash,
+          });
+        } catch { /* analytics logging is best-effort */ }
+
         send({
           type: "done",
           exchangeId,
+          questionId,
           answer: cleanAnswer,
           articles: doneArticles,
           // Include the remaining context for debugging / future use but the widget UI hides them
