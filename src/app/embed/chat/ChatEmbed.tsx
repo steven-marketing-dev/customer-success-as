@@ -182,7 +182,7 @@ function MenuView({ config, color, onPick }: {
             color={color}
             icon={<Mail size={18} />}
             title="Email Support"
-            subtitle="Send us a detailed message. We'll reply within one business day."
+            subtitle="We reply within 60 minutes — end of business day at the latest."
             onClick={() => onPick("email")}
           />
         )}
@@ -622,14 +622,14 @@ function EmailView({ widgetKey, color, onSent }: { widgetKey: string; color: str
           <Check size={24} />
         </div>
         <h3 className="font-semibold text-slate-800">Thanks — we&apos;ve got your message.</h3>
-        <p className="text-sm text-slate-500 max-w-xs">A member of our support team will get back to you at <strong>{email}</strong> within one business day.</p>
+        <p className="text-sm text-slate-500 max-w-xs">We&apos;ll reply to <strong>{email}</strong> within 60 minutes — end of business day at the latest.</p>
       </div>
     );
   }
 
   return (
     <form onSubmit={submit} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-      <p className="text-sm text-slate-500">Send us a detailed message. We&apos;ll reply by email within one business day.</p>
+      <p className="text-sm text-slate-500">We reply within 60 minutes — end of business day at the latest.</p>
 
       <label className="block space-y-1">
         <span className="text-xs font-medium text-slate-700">Problem overview</span>
