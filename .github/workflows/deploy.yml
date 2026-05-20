@@ -32,6 +32,8 @@ jobs:
           tags: |
             ghcr.io/${{ env.IMAGE_NAME }}:latest
             ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_HUBSPOT_HUB_ID=${{ secrets.NEXT_PUBLIC_HUBSPOT_HUB_ID }}
 
   deploy:
     needs: build-and-push

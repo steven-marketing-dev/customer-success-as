@@ -13,6 +13,8 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+ARG NEXT_PUBLIC_HUBSPOT_HUB_ID
+ENV NEXT_PUBLIC_HUBSPOT_HUB_ID=$NEXT_PUBLIC_HUBSPOT_HUB_ID
 RUN npm run build
 
 # --- Runtime ---
