@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { X, Loader2, MessageSquare, MousePointerClick, Star, Activity, ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
+import { X, Loader2, MessageSquare, MousePointerClick, Star, Activity, ExternalLink, ChevronDown, ChevronRight, Download } from "lucide-react";
 
 interface AnalyticsData {
   installation: { id: number; name: string; product_name: string | null };
@@ -113,6 +113,15 @@ export function WidgetAnalyticsModal({
                 </button>
               ))}
             </div>
+            <a
+              href={`/widget-installations/${installationId}/report?days=${days}${ratingFilter ? `&rating=${ratingFilter}` : ""}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-mint-700 hover:border-mint-300 whitespace-nowrap"
+              title="Open printable report in a new tab"
+            >
+              <Download size={12} />Export PDF
+            </a>
             <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 text-slate-500">
               <X size={16} />
             </button>
@@ -428,3 +437,4 @@ function Field({ label, value, multiline }: { label: string; value: string; mult
     </div>
   );
 }
+
