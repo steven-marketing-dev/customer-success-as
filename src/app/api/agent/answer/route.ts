@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Repository } from "@/lib/db/repository";
 import { getDb, type QAPair } from "@/lib/db/index";
 import { streamChat } from "@/lib/ai/provider";
+import { sanitizeCalendlyLinks } from "@/lib/calendly";
 
 export const maxDuration = 60;
 
@@ -170,12 +171,15 @@ ${context}
   const usedArticleIds = parseIds("ARTICLES");
   const usedVideoIds = parseIds("VIDEOS");
 
-  const cleanAnswer = fullText
-    .replace(/\n?SOURCES:\s*\[[^\]]*\]/gm, "")
-    .replace(/\n?REFS:\s*\[[^\]]*\]/gm, "")
-    .replace(/\n?ARTICLES:\s*\[[^\]]*\]/gm, "")
-    .replace(/\n?VIDEOS:\s*\[[^\]]*\]/gm, "")
-    .trim();
+  const cleanAnswer = sanitizeCalendlyLinks(
+    fullText
+      .replace(/\n?SOURCES:\s*\[[^\]]*\]/gm, "")
+      .replace(/\n?REFS:\s*\[[^\]]*\]/gm, "")
+      .replace(/\n?ARTICLES:\s*\[[^\]]*\]/gm, "")
+      .replace(/\n?VIDEOS:\s*\[[^\]]*\]/gm, "")
+      .trim(),
+    null
+  );
 
   const citedArticles = articles
     .filter((a) => usedArticleIds.includes(a.id))

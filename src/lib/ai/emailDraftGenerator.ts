@@ -20,7 +20,7 @@ Rules:
 - Use "Hi," as the greeting
 - Do NOT include any sign-off, signature, or sender name at the end
 ${hasArticles ? `- Include a "Helpful Resources" section near the end of the body with the provided KB articles as clickable links. Format as: <p><strong>Helpful Resources:</strong></p><ul> with <li><a href="URL">Title</a></li> for each article.` : ""}
-${calendlyUrl ? `- AFTER the articles (if any), include as the very last line: "If you'd like to discuss this further, feel free to <a href="${calendlyUrl}">schedule a call</a>."` : ""}
+${calendlyUrl ? `- AFTER the articles (if any), include as the very last line: "If you'd like to discuss this further, feel free to <a href="${calendlyUrl}">schedule a call</a>." CRITICAL: Use EXACTLY this URL, do NOT modify or create any other Calendly link.` : ""}
 - Format the body as HTML with proper paragraphs (<p> tags), lists (<ul>/<ol>) where appropriate
 - Do NOT include any citation lines (SOURCES, REFS, ARTICLES, VIDEOS) from the original response
 - Respond with JSON only: { "subject": "...", "body": "..." }`;
@@ -61,7 +61,7 @@ Rules:
 - Apply the user's instruction to the current draft
 - Keep the professional, warm tone
 - Do NOT include any sign-off, signature, or sender name at the end
-${calendlyUrl ? `- If the Calendly link is present, keep it. Link: ${calendlyUrl}` : ""}
+${calendlyUrl ? `- If the Calendly link is present, keep it EXACTLY as: ${calendlyUrl} Do NOT modify, replace, or create any other Calendly link.` : ""}
 - Format the body as HTML with proper paragraphs (<p> tags), lists (<ul>/<ol>) where appropriate
 - Respond with JSON only: { "subject": "...", "body": "..." }`;
 
