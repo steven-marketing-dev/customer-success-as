@@ -4,6 +4,7 @@ import { Repository } from "@/lib/db/repository";
 import { getDb, type QAPair } from "@/lib/db/index";
 import { streamChat, type ChatMessage } from "@/lib/ai/provider";
 import { corsHeaders, resolveInstallation, checkAndRecordRate, hashIp, extractClientIp } from "@/lib/widget-auth";
+import { sanitizeCalendlyLinks } from "@/lib/calendly";
 
 export const maxDuration = 60;
 
@@ -247,12 +248,15 @@ ${context}
           : [];
         const citedVideos = usedVideoIds.length > 0 ? processCards.filter((pc) => usedVideoIds.includes(pc.id)) : [];
 
-        const cleanAnswer = fullText
-          .replace(/\n?SOURCES:\s*\[[^\]]*\]/gm, "")
-          .replace(/\n?REFS:\s*\[[^\]]*\]/gm, "")
-          .replace(/\n?ARTICLES:\s*\[[^\]]*\]/gm, "")
-          .replace(/\n?VIDEOS:\s*\[[^\]]*\]/gm, "")
-          .trim();
+        const cleanAnswer = sanitizeCalendlyLinks(
+          fullText
+            .replace(/\n?SOURCES:\s*\[[^\]]*\]/gm, "")
+            .replace(/\n?REFS:\s*\[[^\]]*\]/gm, "")
+            .replace(/\n?ARTICLES:\s*\[[^\]]*\]/gm, "")
+            .replace(/\n?VIDEOS:\s*\[[^\]]*\]/gm, "")
+            .trim(),
+          installation.calendly_url
+        );
 
         const doneArticles = citedArticles.map((a) => ({ id: a.id, title: a.title, url: a.url, category: a.category }));
         const doneVideos = citedVideos.map((v) => ({ id: v.id, title: v.title, loom_url: v.loom_url, summary: v.summary }));

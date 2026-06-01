@@ -4,6 +4,7 @@ import { getDb, type QAPair } from "@/lib/db/index";
 import { streamChat, type ChatMessage } from "@/lib/ai/provider";
 import { requireAuth } from "@/lib/auth";
 import { detectReportUrls, fetchReportData, formatReportContext } from "@/lib/report-fetcher";
+import { sanitizeCalendlyLinks } from "@/lib/calendly";
 
 export const maxDuration = 60;
 
@@ -284,8 +285,9 @@ ${rules.join("\n")}
 ${currentUser?.calendly_url ? `
 --- SCHEDULING ---
 The current support agent's name is "${currentUser.display_name || currentUser.username}" and their Calendly scheduling link is: ${currentUser.calendly_url}
-When you suggest a meeting, call, or follow-up with the customer, include this link using the format: [Schedule a call](${currentUser.calendly_url})
-Do NOT fabricate or modify this URL. Only include it when a meeting or call is genuinely relevant to the answer.
+When you suggest a meeting, call, or follow-up with the customer, ALWAYS use EXACTLY this URL: ${currentUser.calendly_url}
+CRITICAL: Do NOT create, guess, or use any other Calendly URL. Only include the link when a meeting or call is genuinely relevant to the answer.
+Format: [Schedule a call](${currentUser.calendly_url})
 --- END SCHEDULING ---` : ""}
 ${glossaryContext ? `
 --- GLOSSARY ---
@@ -378,12 +380,15 @@ ${context}
           : [];
 
         // Strip SOURCES, REFS, ARTICLES, and VIDEOS lines from the answer
-        const cleanAnswer = fullText
-          .replace(/\n?SOURCES:\s*\[[^\]]*\]/gm, "")
-          .replace(/\n?REFS:\s*\[[^\]]*\]/gm, "")
-          .replace(/\n?ARTICLES:\s*\[[^\]]*\]/gm, "")
-          .replace(/\n?VIDEOS:\s*\[[^\]]*\]/gm, "")
-          .trim();
+        const cleanAnswer = sanitizeCalendlyLinks(
+          fullText
+            .replace(/\n?SOURCES:\s*\[[^\]]*\]/gm, "")
+            .replace(/\n?REFS:\s*\[[^\]]*\]/gm, "")
+            .replace(/\n?ARTICLES:\s*\[[^\]]*\]/gm, "")
+            .replace(/\n?VIDEOS:\s*\[[^\]]*\]/gm, "")
+            .trim(),
+          currentUser?.calendly_url
+        );
 
         // Extract relevant excerpts from cited content by finding the best-matching paragraph
         function extractExcerpt(content: string, answer: string): string {
