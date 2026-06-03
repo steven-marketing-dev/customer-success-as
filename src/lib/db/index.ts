@@ -262,6 +262,18 @@ export interface WidgetRateEvent {
   created_at: number;
 }
 
+export type WidgetEventType = "kb_click" | "calendly_click" | "email_submit";
+
+export interface WidgetEvent {
+  id: number;
+  installation_id: number;
+  event_type: WidgetEventType;
+  source_url: string | null;
+  ip_hash: string;
+  metadata: string | null; // JSON
+  created_at: number;
+}
+
 export interface WidgetQuestion {
   id: number;
   installation_id: number;
@@ -564,6 +576,18 @@ function initDb(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_widget_rate_events_install_created ON widget_rate_events(installation_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_widget_rate_events_ip_created ON widget_rate_events(ip_hash, created_at);
+
+    CREATE TABLE IF NOT EXISTS widget_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      installation_id INTEGER NOT NULL REFERENCES widget_installations(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      source_url TEXT,
+      ip_hash TEXT NOT NULL,
+      metadata TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_widget_events_install_type_created ON widget_events(installation_id, event_type, created_at);
+    CREATE INDEX IF NOT EXISTS idx_widget_events_install_created ON widget_events(installation_id, created_at);
 
     CREATE TABLE IF NOT EXISTS widget_questions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

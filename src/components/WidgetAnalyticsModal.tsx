@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { X, Loader2, MessageSquare, MousePointerClick, Star, Activity, ExternalLink, ChevronDown, ChevronRight, Download } from "lucide-react";
+import { X, Loader2, MessageSquare, MousePointerClick, Star, Activity, ExternalLink, ChevronDown, ChevronRight, Download, BookOpen, Calendar, Mail } from "lucide-react";
 
 interface AnalyticsData {
   installation: { id: number; name: string; product_name: string | null };
@@ -18,6 +18,12 @@ interface AnalyticsData {
     created_at: number;
   }>;
   volume_by_day: Array<{ day: string; questions: number; ratings: number; clicks: number }>;
+  menu_actions: {
+    totals: Record<string, number>;
+    uniques: Record<string, number>;
+    daily: Array<{ date: string; counts: Record<string, number> }>;
+    topSourceUrls: Array<{ url: string; count: number }>;
+  };
 }
 
 const RANGE_OPTIONS: Array<{ label: string; days: number }> = [
@@ -140,6 +146,8 @@ export function WidgetAnalyticsModal({
           ) : data ? (
             <>
               <VolumePanel data={data} />
+
+              <MenuActionsPanel data={data} />
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <TopQuestionsPanel data={data} />
@@ -435,6 +443,73 @@ function Field({ label, value, multiline }: { label: string; value: string; mult
       <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold mb-0.5">{label}</p>
       <p className={`text-xs text-slate-700 ${multiline ? "whitespace-pre-wrap" : ""}`}>{value}</p>
     </div>
+  );
+}
+
+function MenuActionsPanel({ data }: { data: AnalyticsData }) {
+  const ma = data.menu_actions;
+  const tiles: Array<{ key: string; label: string; icon: typeof BookOpen; tone: string }> = [
+    { key: "kb_click", label: "KB clicks", icon: BookOpen, tone: "bg-cyan-50 text-cyan-700 border-cyan-200" },
+    { key: "calendly_click", label: "Calendly clicks", icon: Calendar, tone: "bg-violet-50 text-violet-700 border-violet-200" },
+    { key: "email_submit", label: "Email submits", icon: Mail, tone: "bg-mint-50 text-mint-700 border-mint-200" },
+  ];
+  const anyActivity = tiles.some((t) => (ma.totals[t.key] ?? 0) > 0);
+
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+            <MousePointerClick size={14} className="text-slate-400" />
+            Menu actions
+          </h3>
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            Clicks on the help-menu options and email-form submissions. Uniques are counted per hashed IP.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        {tiles.map((t) => {
+          const total = ma.totals[t.key] ?? 0;
+          const unique = ma.uniques[t.key] ?? 0;
+          const Icon = t.icon;
+          return (
+            <div key={t.key} className={`rounded-lg border px-3 py-2.5 ${t.tone}`}>
+              <div className="flex items-center gap-1.5 text-[11px] font-medium opacity-90">
+                <Icon size={12} />{t.label}
+              </div>
+              <div className="mt-1 flex items-baseline gap-1.5">
+                <span className="text-2xl font-bold tabular-nums">{total}</span>
+                <span className="text-[11px] opacity-70">{unique} unique{unique === 1 ? "" : "s"}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {ma.topSourceUrls.length > 0 && (
+        <div className="mt-3">
+          <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Top source pages</p>
+          <ul className="space-y-1">
+            {ma.topSourceUrls.map((s) => (
+              <li key={s.url} className="flex items-center gap-2 text-xs">
+                <span className="flex-shrink-0 w-7 h-5 rounded bg-slate-100 text-slate-600 text-[11px] font-semibold flex items-center justify-center tabular-nums">
+                  {s.count}
+                </span>
+                <span className="truncate text-slate-700 font-mono text-[11px]" title={s.url}>{s.url}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {!anyActivity && (
+        <p className="text-xs text-slate-400 py-4 text-center">
+          No menu-action clicks recorded yet for this window. Counts appear here as users click Knowledge Base, Schedule a Meeting, or submit the email form.
+        </p>
+      )}
+    </section>
   );
 }
 

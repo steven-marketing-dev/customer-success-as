@@ -44,6 +44,38 @@ function postToParent(payload: Record<string, unknown>) {
   try { window.parent?.postMessage({ source: "cs-widget", ...payload }, "*"); } catch { /* */ }
 }
 
+/** Best-effort fire-and-forget event tracker. Uses sendBeacon so the request survives
+ *  the navigation away (e.g. clicking KB → opens new tab → page may unload). */
+function trackEvent(widgetKey: string, type: "kb_click" | "calendly_click", sourceUrl: string | null) {
+  if (!widgetKey) return;
+  const url = `/api/widget/event?key=${encodeURIComponent(widgetKey)}`;
+  const body = JSON.stringify({ type, sourceUrl });
+  try {
+    if (typeof navigator !== "undefined" && navigator.sendBeacon) {
+      const blob = new Blob([body], { type: "application/json" });
+      navigator.sendBeacon(url, blob);
+      return;
+    }
+  } catch { /* fall through */ }
+  // Fallback: keepalive fetch so it survives unload as well
+  try {
+    fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true });
+  } catch { /* */ }
+}
+
+/** The URL the user is currently viewing (the host page that embeds the iframe).
+ *  Falls back to document.referrer when the parent's location is cross-origin and
+ *  reading it directly throws. */
+function getHostPageUrl(): string {
+  try {
+    if (window.parent && window.parent !== window) {
+      // Will throw on cross-origin access; that's expected.
+      return window.parent.location.href;
+    }
+  } catch { /* */ }
+  return document.referrer || "";
+}
+
 function reportArticleClick(widgetKey: string, questionId: number | null, article: ArticleRef): void {
   if (!widgetKey) return;
   const url = `/api/widget/article-click?key=${encodeURIComponent(widgetKey)}`;
@@ -136,10 +168,12 @@ export function ChatEmbed() {
         {view === "menu" && (
           <MenuView config={config} color={color} onPick={(v) => {
             if (v === "calendly" && config.calendlyUrl) {
+              trackEvent(widgetKey, "calendly_click", getHostPageUrl());
               window.open(config.calendlyUrl, "_blank", "noopener,noreferrer");
               return;
             }
             if (v === "knowledge_base" && config.knowledgeBaseUrl) {
+              trackEvent(widgetKey, "kb_click", getHostPageUrl());
               window.open(config.knowledgeBaseUrl, "_blank", "noopener,noreferrer");
               return;
             }
@@ -277,8 +311,14 @@ function ChatView({ widgetKey, color, productName }: {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const prevMessageCountRef = useRef(0);
+  // Whether the user is currently glued to the bottom of the scroll area.
+  // While true, streaming deltas auto-follow. Once the user scrolls up to read,
+  // it goes false and we stop pulling them back down.
+  const stuckToBottomRef = useRef(true);
+  const hasHydratedRef = useRef(false);
 
   useEffect(() => {
     try {
@@ -297,8 +337,57 @@ function ChatView({ widgetKey, color, productName }: {
     } catch { /* */ }
   }, [messages, storageKey]);
 
+  // Track whether the user is near the bottom of the scroll container
+  const onScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stuckToBottomRef.current = distFromBottom < 80;
+  }, []);
+
+  // Smart scroll: on new message added, pin the user question to the top so the
+  // answer streams in below it (readable top-down). On streaming deltas, only
+  // follow the bottom if the user hasn't scrolled away to read.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const prevCount = prevMessageCountRef.current;
+    const newCount = messages.length;
+    prevMessageCountRef.current = newCount;
+
+    if (newCount === 0) return;
+
+    if (!hasHydratedRef.current) {
+      hasHydratedRef.current = true;
+      el.scrollTop = el.scrollHeight;
+      stuckToBottomRef.current = true;
+      return;
+    }
+
+    if (newCount > prevCount) {
+      // New message(s) added — find the latest user message and pin it to the top
+      let userIdx = -1;
+      for (let i = newCount - 1; i >= prevCount; i--) {
+        if (messages[i].role === "user") { userIdx = i; break; }
+      }
+      if (userIdx >= 0) {
+        const userEl = el.querySelector<HTMLElement>(`[data-msg-index="${userIdx}"]`);
+        if (userEl) {
+          userEl.scrollIntoView({ behavior: "smooth", block: "start" });
+          stuckToBottomRef.current = false;
+          return;
+        }
+      }
+      el.scrollTop = el.scrollHeight;
+      stuckToBottomRef.current = true;
+      return;
+    }
+
+    // Same message count → content update (streaming delta). Only follow if glued.
+    if (stuckToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
   }, [messages]);
 
   const send = useCallback(async (e?: FormEvent) => {
@@ -399,7 +488,7 @@ function ChatView({ widgetKey, color, productName }: {
 
   return (
     <>
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div ref={scrollContainerRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 gap-2 py-8">
             <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ backgroundColor: `${color}15`, color }}>
@@ -410,16 +499,16 @@ function ChatView({ widgetKey, color, productName }: {
           </div>
         ) : (
           messages.map((msg, i) => (
-            <MessageBubble
-              key={i}
-              msg={msg}
-              color={color}
-              widgetKey={widgetKey}
-              userQuestion={msg.role === "assistant" ? (messages[i - 1]?.content ?? "") : ""}
-            />
+            <div key={i} data-msg-index={i} className="scroll-mt-2">
+              <MessageBubble
+                msg={msg}
+                color={color}
+                widgetKey={widgetKey}
+                userQuestion={msg.role === "assistant" ? (messages[i - 1]?.content ?? "") : ""}
+              />
+            </div>
           ))
         )}
-        <div ref={bottomRef} />
       </div>
 
       {messages.length > 0 && (

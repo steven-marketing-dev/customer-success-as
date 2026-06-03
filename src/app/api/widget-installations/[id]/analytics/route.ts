@@ -45,6 +45,9 @@ export async function GET(
     repo.getWidgetVolumeByDay(installationId, days),
   ];
 
+  // Menu-action events (KB click, Calendly click, email submit) — recorded in widget_events
+  const menuActions = repo.getInstallationAnalytics(installationId, days);
+
   return NextResponse.json({
     installation: {
       id: installation.id,
@@ -57,5 +60,6 @@ export async function GET(
     rating_breakdown: ratingBreakdown,
     ratings_feed: ratingsFeed,
     volume_by_day: volume,
+    menu_actions: menuActions,
   });
 }

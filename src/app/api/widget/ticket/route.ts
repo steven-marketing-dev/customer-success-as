@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import { HubSpotClient } from "@/lib/hubspot";
+import { Repository } from "@/lib/db/repository";
+import { getDb } from "@/lib/db/index";
 import { corsHeaders, resolveInstallation, extractClientIp, hashIp, checkAndRecordRate } from "@/lib/widget-auth";
 
 const MAX_SUBJECT = 200;
@@ -68,6 +70,21 @@ export async function POST(req: NextRequest) {
       sourceUrl,
       productName: installation.product_name,
     });
+
+    // Record the submission as an analytics event (best-effort, never blocks the response)
+    try {
+      const repo = new Repository(getDb());
+      repo.recordWidgetEvent({
+        installation_id: installation.id,
+        event_type: "email_submit",
+        source_url: sourceUrl,
+        ip_hash: ipHash,
+        metadata: { ticketId: ticket.id, subjectLength: subject.length },
+      });
+    } catch (e) {
+      console.warn("[widget/ticket] event record failed:", e);
+    }
+
     return new Response(JSON.stringify({ ok: true, ticketId: ticket.id }), {
       headers: { "Content-Type": "application/json", ...cors },
     });

@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import crypto from "crypto";
-import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion, type GmailToken, type WidgetInstallation, type WidgetRating, type WidgetQuestion, type WidgetArticleClick, type ClarityMetric } from "./index";
+import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion, type GmailToken, type WidgetInstallation, type WidgetRating, type WidgetQuestion, type WidgetArticleClick, type ClarityMetric, type WidgetEventType } from "./index";
 
 function normalizeQuestion(q: string): string {
   return q.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, " ").trim().slice(0, 200);
@@ -2327,5 +2327,76 @@ export class Repository {
       `INSERT INTO insight_cache (date_key, content_hash, payload) VALUES (?, ?, ?)
        ON CONFLICT(date_key, content_hash) DO UPDATE SET payload = excluded.payload, created_at = unixepoch()`
     ).run(dateKey, contentHash, payload);
+  }
+
+  // ─── Widget Events (analytics) ──────────────────────────────────────────────
+
+  recordWidgetEvent(data: {
+    installation_id: number;
+    event_type: WidgetEventType;
+    source_url: string | null;
+    ip_hash: string;
+    metadata?: Record<string, unknown> | null;
+  }): void {
+    this.db.prepare(
+      "INSERT INTO widget_events (installation_id, event_type, source_url, ip_hash, metadata) VALUES (?, ?, ?, ?, ?)"
+    ).run(
+      data.installation_id,
+      data.event_type,
+      data.source_url,
+      data.ip_hash,
+      data.metadata ? JSON.stringify(data.metadata) : null
+    );
+  }
+
+  /** Aggregate analytics for an installation over the last `days` days. */
+  getInstallationAnalytics(installationId: number, days: number): {
+    totals: Record<string, number>;
+    uniques: Record<string, number>;
+    daily: Array<{ date: string; counts: Record<string, number> }>;
+    topSourceUrls: Array<{ url: string; count: number }>;
+  } {
+    const sinceSeconds = days * 86400;
+
+    const totalsRows = this.db.prepare(
+      `SELECT event_type, COUNT(*) as c, COUNT(DISTINCT ip_hash) as u
+       FROM widget_events
+       WHERE installation_id = ? AND created_at >= unixepoch() - ?
+       GROUP BY event_type`
+    ).all(installationId, sinceSeconds) as Array<{ event_type: string; c: number; u: number }>;
+
+    const totals: Record<string, number> = {};
+    const uniques: Record<string, number> = {};
+    for (const r of totalsRows) {
+      totals[r.event_type] = r.c;
+      uniques[r.event_type] = r.u;
+    }
+
+    const dailyRows = this.db.prepare(
+      `SELECT date(created_at, 'unixepoch') as d, event_type, COUNT(*) as c
+       FROM widget_events
+       WHERE installation_id = ? AND created_at >= unixepoch() - ?
+       GROUP BY d, event_type
+       ORDER BY d ASC`
+    ).all(installationId, sinceSeconds) as Array<{ d: string; event_type: string; c: number }>;
+
+    const dailyMap = new Map<string, Record<string, number>>();
+    for (const r of dailyRows) {
+      const bucket = dailyMap.get(r.d) ?? {};
+      bucket[r.event_type] = r.c;
+      dailyMap.set(r.d, bucket);
+    }
+    const daily = Array.from(dailyMap.entries()).map(([date, counts]) => ({ date, counts }));
+
+    const topSourceUrls = this.db.prepare(
+      `SELECT source_url as url, COUNT(*) as count
+       FROM widget_events
+       WHERE installation_id = ? AND created_at >= unixepoch() - ? AND source_url IS NOT NULL AND source_url != ''
+       GROUP BY source_url
+       ORDER BY count DESC
+       LIMIT 5`
+    ).all(installationId, sinceSeconds) as Array<{ url: string; count: number }>;
+
+    return { totals, uniques, daily, topSourceUrls };
   }
 }
