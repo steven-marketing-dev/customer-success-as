@@ -16,7 +16,7 @@ export function getProvider(): Provider {
 
 // Claude model tiers
 const CLAUDE_FAST = "claude-haiku-4-5-20251001";   // Pipeline bulk work (extraction, categorization, merge)
-const CLAUDE_SMART = "claude-sonnet-4-20250514";    // User-facing (agent chat, AI editor, recluster)
+const CLAUDE_SMART = "claude-sonnet-4-6";    // User-facing (agent chat, AI editor, recluster)
 
 // ─── Rate limit retry helper ──────────────────────────────────────────────
 
