@@ -5,7 +5,10 @@
       "Skill(codex:rescue)",
       "Skill(codex:rescue:*)",
       "Skill(codex:review)",
-      "Skill(codex:review:*)"
+      "Skill(codex:review:*)",
+      "Bash(curl -sN -X POST http://localhost:3000/api/agent/chat -H 'Content-Type: application/json' -d '{\"question\":\"What assessments do you recommend for problem-solving and customer service roles?\",\"history\":[]}' --max-time 90)",
+      "Bash(echo \"=== exit $? ===\")",
+      "Read(//tmp/**)"
     ]
   }
 }

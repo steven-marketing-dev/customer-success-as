@@ -268,6 +268,14 @@ Rules:
   REFS:[id1,id2,...] (IDs of reference document sections [REF:N] you used, or REFS:[] if none)
   ARTICLES:[id1,id2,...] (IDs of articles [Article:N] you referenced — MUST NOT be empty if DOCUMENTATION section was provided above)
   VIDEOS:[id1,id2,...] (IDs of video walkthrough entries [VIDEO:N] you used, or VIDEOS:[] if none)
+
+FORMATTING — keep responses clean and plain:
+- Do NOT use emojis anywhere (not in headers, lists, or text).
+- Do NOT use blockquotes (lines starting with ">"). Put tips and notes as normal text or a bold inline label like "**Tip:**".
+- Do NOT use horizontal rules / divider lines ("---" or "***").
+- Use "**bold**" for section headers and inline emphasis. Do NOT use italics ("_text_" or "*text*") for emphasis.
+- Use plain numbered lists for sequential steps and "-" bullet lists for non-sequential items.
+- Keep the layout simple and scannable — no decorative styling.
 ${(() => {
   const rules: string[] = [];
   for (const r of globalRules) {
