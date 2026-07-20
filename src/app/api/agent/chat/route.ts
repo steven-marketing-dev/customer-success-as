@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { Repository } from "@/lib/db/repository";
 import { getDb, type QAPair } from "@/lib/db/index";
 import { streamChat, type ChatMessage } from "@/lib/ai/provider";
+import { groundingRules } from "@/lib/ai/groundingRules";
 import { requireAuth } from "@/lib/auth";
 import { detectReportUrls, fetchReportData, formatReportContext } from "@/lib/report-fetcher";
 import { sanitizeCalendlyLinks } from "@/lib/calendly";
@@ -246,19 +247,22 @@ export async function POST(req: NextRequest) {
 IMPORTANT — Pattern-based reasoning:
 - Some entries include a "Pattern" field (e.g., "How do I schedule a meeting for {{service_name}}?") and "Variables" (e.g., {"service_name": "Service X"}).
 - The Pattern shows the generalized form of the question. The same solution can apply to different variable values.
-- If a user asks about "Service Y" but you only have a matching pattern for "Service X", the answer/process is likely the same — adapt it to the user's context.
-- Think about the underlying process or workflow, not just the specific entity mentioned.
+- If a user asks about "Service Y" but you only have a matching pattern for "Service X", the answer/process is likely the same — adapt it to the user's context and note that you're applying a similar case.
+- This applies ONLY to substituting different Variable values into the same Pattern. It is NOT license to adapt an entry about a different topic, feature, or use case to this question — see the grounding rules below.
 
-Rules:
+${groundingRules({
+    productName: "the product",
+    gapInstruction:
+      "say plainly that the knowledge base doesn't have documented guidance for this exact case — do not assemble an answer from loosely related passages. If part of the question IS covered, answer that part and note the limitation clearly.",
+    hasSchedulingSection: Boolean(currentUser?.calendly_url),
+  })}
+
+Additional rules:
 - Answer directly and concisely based on the provided knowledge base entries and documentation
 - Use the glossary to understand product-specific terminology
 - Reference official documentation (Articles) for how-to content and feature explanations
 - Reference support Q&A entries for real customer interactions and resolutions
 - IMPORTANT: Reference documents (marked [REF:N]) contain authoritative training materials and product manuals. When they contain information relevant to the question, you MUST use that information and cite the section ID. They are the most reliable source for assessment methodology, trait definitions, scoring interpretation, and validation procedures.
-- When the exact topic isn't in the KB but a similar pattern exists, adapt the answer and note that you're applying a similar case
-- If the question truly cannot be answered from the provided entries, say so clearly — do not guess or invent information
-- If the answer is partial, say what you know and note the limitation
-- Do not reference external information
 - ARTICLE LINKS: When articles are provided in the DOCUMENTATION section below, you MUST reference at least one. At the END of your response (before the SOURCES/REFS/ARTICLES lines), add a brief closing line with article links:
   - For 1 article: "For more details, see [Article Title](URL)."
   - For 2+ articles: "For more information, here are some helpful articles:" followed by a list: - [Article Title](URL)

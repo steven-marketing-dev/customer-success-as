@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Repository } from "@/lib/db/repository";
 import { getDb, type QAPair } from "@/lib/db/index";
 import { streamChat } from "@/lib/ai/provider";
+import { groundingRules } from "@/lib/ai/groundingRules";
 import { sanitizeCalendlyLinks } from "@/lib/calendly";
 
 export const maxDuration = 60;
@@ -133,21 +134,28 @@ export async function POST(req: NextRequest) {
   for (const r of globalRules) rules.push(`[GLOBAL${r.type !== "general" ? ` / ${r.type.toUpperCase()}` : ""}] ${r.title}: ${r.instruction}`);
   for (const r of categoryRules) rules.push(`[CATEGORY${r.type !== "general" ? ` / ${r.type.toUpperCase()}` : ""}] ${r.title}: ${r.instruction}`);
 
-  // System prompt: KB-grounded substance only. No sign-off / Calendly / email
-  // formatting — n8n's "1.16 Generate Response" node owns the email shape.
-  const system = `You are a customer support knowledge assistant. Answer the question using ONLY the knowledge base entries and documentation provided below. Your answer will be used as factual context by a downstream system that formats the final customer email, so DO NOT add greetings, sign-offs, or scheduling links — just the substance.
+  // System prompt: KB-grounded substance only, with strict grounding discipline —
+  // no invented mechanics, no hedge-strengthening, no third-party workarounds, no
+  // contradicting a source's conclusion. No sign-off / Calendly / email formatting —
+  // n8n's "1.16 Generate Response" node owns the email shape.
+  const system = `You answer Discovered customer-support questions using ONLY the knowledge-base passages retrieved for this query and provided below (reference documents, articles, video walkthroughs, and resolved-ticket Q&As). You are a grounding-and-relaying layer, not a product expert. Your answer will be used as factual context by a downstream system that formats the final customer email, so DO NOT add greetings, sign-offs, or scheduling links — just the substance.
 
-Rules:
-- Answer directly and concisely from the provided entries and documentation.
+${groundingRules({
+    productName: "Discovered",
+    gapInstruction:
+      "say plainly that we don't have documented guidance for this exact case — do not assemble an answer from loosely related passages — and output KB_GAP:[true] (see below). The downstream system will route these to a human.",
+  })}
+
+Additional rules:
 - Use the glossary to understand product-specific terminology.
 - Prefer reference documents (marked [REF:N]) for assessment methodology, trait definitions, scoring, and validation — they are authoritative.
-- When the exact topic isn't in the KB but a similar pattern exists, adapt the answer and note you are applying a similar case.
-- If the question cannot be answered from the provided entries, say so clearly — do not guess. (The downstream system will route these to a human.)
+- Cite only the passages you actually drew statements from. Never invent or modify IDs or URLs.
 - At the very END of your response, output these citation lines exactly:
   SOURCES:[id1,id2,...] (IDs of Q&A entries [ID:N] you used, or SOURCES:[] if none)
   REFS:[id1,id2,...] (IDs of reference sections [REF:N] you used, or REFS:[] if none)
   ARTICLES:[id1,id2,...] (IDs of articles [Article:N] you referenced, or ARTICLES:[] if none)
   VIDEOS:[id1,id2,...] (IDs of video walkthroughs [VIDEO:N] you used, or VIDEOS:[] if none)
+  KB_GAP:[true] or KB_GAP:[false] (true when the retrieved passages do not answer the specific question)
 ${rules.length > 0 ? `\n--- BEHAVIORAL RULES ---\n${rules.join("\n")}\n--- END BEHAVIORAL RULES ---` : ""}${glossaryContext ? `\n--- GLOSSARY ---\n${glossaryContext}\n--- END GLOSSARY ---` : ""}${refDocsContext ? `\n--- REFERENCE DOCUMENTS ---\n${refDocsContext}\n--- END REFERENCE DOCUMENTS ---` : ""}${articlesContext ? `\n--- DOCUMENTATION (${articles.length} public KB article${articles.length !== 1 ? "s" : ""}) ---\n${articlesContext}\n--- END DOCUMENTATION ---` : ""}${processCardsContext ? `\n--- VIDEO WALKTHROUGHS ---\n${processCardsContext}\n--- END VIDEO WALKTHROUGHS ---` : ""}
 
 --- SUPPORT Q&A (past customer tickets) ---
@@ -170,6 +178,7 @@ ${context}
   const usedRefIds = parseIds("REFS");
   const usedArticleIds = parseIds("ARTICLES");
   const usedVideoIds = parseIds("VIDEOS");
+  const modelGap = /KB_GAP:\s*\[\s*true\s*\]/i.test(fullText);
 
   const cleanAnswer = sanitizeCalendlyLinks(
     fullText
@@ -177,6 +186,7 @@ ${context}
       .replace(/\n?REFS:\s*\[[^\]]*\]/gm, "")
       .replace(/\n?ARTICLES:\s*\[[^\]]*\]/gm, "")
       .replace(/\n?VIDEOS:\s*\[[^\]]*\]/gm, "")
+      .replace(/\n?KB_GAP:\s*\[[^\]]*\]/gim, "")
       .trim(),
     null
   );
@@ -185,8 +195,10 @@ ${context}
     .filter((a) => usedArticleIds.includes(a.id))
     .map((a) => ({ id: a.id, title: a.title, url: a.url, category: a.category }));
 
-  // No KB hit at all, or the model said it couldn't answer → flag for human routing.
-  const kb_gap = results.length === 0 && articles.length === 0 && refDocSections.length === 0;
+  // No KB hit at all, or the model flagged that the retrieved passages don't
+  // answer this specific question → flag for human routing.
+  const kb_gap =
+    (results.length === 0 && articles.length === 0 && refDocSections.length === 0) || modelGap;
 
   return NextResponse.json({
     answer: cleanAnswer,

@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { Repository } from "@/lib/db/repository";
 import { getDb, type QAPair } from "@/lib/db/index";
 import { streamChat, type ChatMessage } from "@/lib/ai/provider";
+import { groundingRules } from "@/lib/ai/groundingRules";
 import { corsHeaders, resolveInstallation, checkAndRecordRate, hashIp, extractClientIp } from "@/lib/widget-auth";
 import { sanitizeCalendlyLinks } from "@/lib/calendly";
 
@@ -151,16 +152,21 @@ export async function POST(req: NextRequest) {
 IMPORTANT — Pattern-based reasoning:
 - Some entries include a "Pattern" field (e.g., "How do I schedule a meeting for {{service_name}}?") and "Variables".
 - The Pattern shows the generalized form of the question. The same solution can apply to different variable values.
-- Think about the underlying process or workflow, not just the specific entity mentioned.
+- This applies ONLY to substituting different Variable values into the same Pattern. It is NOT license to adapt an entry about a different topic, feature, or use case to this question — see the grounding rules below.
 
-Rules:
+${groundingRules({
+    productName,
+    gapInstruction:
+      "say plainly that you don't have documented guidance for this exact case and suggest the user contact support — do not assemble an answer from loosely related passages.",
+    hasSchedulingSection: Boolean(installation.calendly_url),
+  })}
+
+Additional rules:
 - Address the user directly ("you", not "the customer" or "the user")
 - Answer concisely based on the provided knowledge base entries and documentation
 - Use the glossary to explain product-specific terminology when helpful
 - Reference documentation (Articles) for how-to content and feature explanations
 - Reference documents (marked [REF:N]) contain authoritative training materials. Use them when relevant.
-- When the exact topic isn't in the KB but a similar pattern exists, adapt the answer
-- If the question truly cannot be answered from the provided entries, say so clearly and suggest the user contact support — do not guess or invent information
 - Do not reference internal processes, teammate workflows, or anything that sounds like it's meant for support staff rather than end users
 - ARTICLE LINKS: When articles are provided in the DOCUMENTATION section below, you MUST reference at least one. At the END of your response (before the SOURCES/REFS/ARTICLES lines), add a brief closing line with article links:
   - For 1 article: "For more details, see [Article Title](URL)."
