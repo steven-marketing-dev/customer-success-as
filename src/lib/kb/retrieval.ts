@@ -42,22 +42,32 @@ export function lookupGlossary(repo: Repository, query: string, limit = 15): Ter
 
 /**
  * Keyword-matched articles plus up to `limit` more linked to matching glossary
- * terms. The term-linked set must be capped: broad terms ("assessment") link to
- * dozens of articles, which blew a single response past 100 KB.
+ * terms. The term-linked set must be capped: broad terms ("Discovered.AI",
+ * "assessment") link to 100+ articles, which put ~125 KB of articles into a
+ * median prompt. Term-linked candidates are ranked by term specificity (a term
+ * linked to few articles says more than one linked to everything).
  */
-export function searchArticles(repo: Repository, query: string, limit: number = DEFAULT_LIMITS.articles): KBArticle[] {
+export function searchArticles(
+  repo: Repository,
+  query: string,
+  limit: number = DEFAULT_LIMITS.articles,
+  matchedTerms: Term[] = repo.getMatchingTermsForQuery(query),
+): KBArticle[] {
   const articles = repo.searchKBArticles(query, limit);
   const seen = new Set(articles.map((a) => a.id));
-  let linked = 0;
-  for (const a of repo.getMatchingTermsForQuery(query).flatMap((t) => repo.getArticlesForTerm(t.id))) {
-    if (linked >= limit) break;
-    if (!seen.has(a.id)) {
-      articles.push(a);
-      seen.add(a.id);
-      linked++;
+
+  const candidates = new Map<number, { article: KBArticle; score: number }>();
+  for (const t of matchedTerms) {
+    const linked = repo.getArticlesForTerm(t.id);
+    for (const a of linked) {
+      if (seen.has(a.id)) continue;
+      const c = candidates.get(a.id) ?? { article: a, score: 0 };
+      c.score += 1 / linked.length;
+      candidates.set(a.id, c);
     }
   }
-  return articles;
+  const ranked = [...candidates.values()].sort((x, y) => y.score - x.score).slice(0, limit);
+  return [...articles, ...ranked.map((c) => c.article)];
 }
 
 export function searchRefDocs(repo: Repository, query: string, limit: number = DEFAULT_LIMITS.refDocs) {
