@@ -39,7 +39,17 @@ export const dynamic = "force-dynamic";
 const INSTRUCTIONS = `Customer Success knowledge base: Q&A extracted from resolved HubSpot support tickets, public KB articles, a glossary of product terms, internal reference docs, Loom video walkthroughs, and behavioral rules for answering customers.
 Start with search_knowledge_base for any customer question; use the narrower tools to dig deeper. Cite KB article URLs and Loom links when you use them, and follow the BEHAVIORAL RULES. If nothing relevant is found, say so instead of guessing.`;
 
-const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
+// Hard cap per tool response so one call can't flood the client's context.
+const MAX_RESPONSE_CHARS = 40_000;
+
+const text = (t: string) => ({
+  content: [{
+    type: "text" as const,
+    text: t.length > MAX_RESPONSE_CHARS
+      ? t.slice(0, MAX_RESPONSE_CHARS) + "\n\n[Response truncated. Use a narrower tool or a smaller limit.]"
+      : t,
+  }],
+});
 const readOnly = { readOnlyHint: true, openWorldHint: false };
 
 function buildServer(): McpServer {
