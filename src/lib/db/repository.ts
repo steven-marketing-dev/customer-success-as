@@ -775,6 +775,10 @@ export class Repository {
       .all() as KBArticle[];
   }
 
+  getKBArticleById(id: number): KBArticle | undefined {
+    return this.db.prepare("SELECT * FROM kb_articles WHERE id = ?").get(id) as KBArticle | undefined;
+  }
+
   searchKBArticles(query: string, limit = 10, offset = 0): KBArticle[] {
     const ftsQuery = this.buildFtsQuery(query);
     if (!ftsQuery) {

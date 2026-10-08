@@ -7,6 +7,7 @@ const PUBLIC_PATHS = [
   "/api/auth/logout",
   "/api/auth/gmail/callback",
   "/api/agent/answer",
+  "/api/mcp",
   "/api/widget",
   "/embed",
   "/widget.js",

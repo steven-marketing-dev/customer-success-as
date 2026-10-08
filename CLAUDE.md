@@ -27,7 +27,7 @@ npm run dev   # → http://localhost:3000
 
 ## Variables (.env.local)
 
-AI_PROVIDER (claude|gemini), ANTHROPIC_API_KEY, GOOGLE_API_KEY, HUBSPOT_ACCESS_TOKEN, DATABASE_PATH, RECLUSTER_THRESHOLD, SYNC_LIMIT, AUTH_SECRET, MASTER_USERNAME, MASTER_PASSWORD, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REDIRECT_URI, GMAIL_TOKEN_ENCRYPTION_KEY, NEXT_PUBLIC_HUBSPOT_HUB_ID
+AI_PROVIDER (claude|gemini), ANTHROPIC_API_KEY, GOOGLE_API_KEY, HUBSPOT_ACCESS_TOKEN, DATABASE_PATH, RECLUSTER_THRESHOLD, SYNC_LIMIT, AUTH_SECRET, MASTER_USERNAME, MASTER_PASSWORD, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REDIRECT_URI, GMAIL_TOKEN_ENCRYPTION_KEY, NEXT_PUBLIC_HUBSPOT_HUB_ID, MCP_ACCESS_TOKEN
 
 ## UI: 5 tabs
 
@@ -76,3 +76,12 @@ tickets, qa_pairs, categories, qa_category_map, sync_state, terms, term_qa_map, 
 **Auth/User**: `/api/auth/*`, `/api/tours`, `/api/db`
 **Widget (public)**: `/api/widget/config`, `/api/widget/chat`, `/api/widget/rate`, `/api/widget/ticket`
 **Widget admin**: `/api/widget-installations`, `/api/widget-installations/[id]`
+**MCP (public, token auth)**: `/api/mcp`
+
+## MCP server (connect Claude to the KB)
+
+`src/app/api/mcp/route.ts` is a remote MCP server (Streamable HTTP, stateless). It exposes the KB as read-only tools: `search_knowledge_base`, `search_qa`, `search_articles`, `get_article`, `lookup_glossary`, `search_reference_docs`, `search_video_guides`, `get_agent_rules`, `list_categories`. Retrieval and formatting live in `src/lib/kb/retrieval.ts` and mirror the in-app agent's context.
+
+- Auth uses `MCP_ACCESS_TOKEN`, sent as `Authorization: Bearer <token>` or `?key=<token>`.
+- **claude.ai / Desktop / mobile**: go to Settings → Connectors → Add custom connector and use the URL `https://<host>/api/mcp?key=<MCP_ACCESS_TOKEN>`.
+- **Claude Code**: `claude mcp add --transport http cs-kb https://<host>/api/mcp --header "Authorization: Bearer <MCP_ACCESS_TOKEN>"`
