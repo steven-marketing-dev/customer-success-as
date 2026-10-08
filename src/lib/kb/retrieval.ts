@@ -40,16 +40,34 @@ export function lookupGlossary(repo: Repository, query: string, limit = 15): Ter
   return out.slice(0, limit);
 }
 
-export function searchArticles(repo: Repository, query: string, limit: number = DEFAULT_LIMITS.articles): KBArticle[] {
+/**
+ * Keyword-matched articles plus up to `limit` more linked to matching glossary
+ * terms. The term-linked set must be capped: broad terms ("Discovered.AI",
+ * "assessment") link to 100+ articles, which put ~125 KB of articles into a
+ * median prompt. Term-linked candidates are ranked by term specificity (a term
+ * linked to few articles says more than one linked to everything).
+ */
+export function searchArticles(
+  repo: Repository,
+  query: string,
+  limit: number = DEFAULT_LIMITS.articles,
+  matchedTerms: Term[] = repo.getMatchingTermsForQuery(query),
+): KBArticle[] {
   const articles = repo.searchKBArticles(query, limit);
   const seen = new Set(articles.map((a) => a.id));
-  for (const a of repo.getMatchingTermsForQuery(query).flatMap((t) => repo.getArticlesForTerm(t.id))) {
-    if (!seen.has(a.id)) {
-      articles.push(a);
-      seen.add(a.id);
+
+  const candidates = new Map<number, { article: KBArticle; score: number }>();
+  for (const t of matchedTerms) {
+    const linked = repo.getArticlesForTerm(t.id);
+    for (const a of linked) {
+      if (seen.has(a.id)) continue;
+      const c = candidates.get(a.id) ?? { article: a, score: 0 };
+      c.score += 1 / linked.length;
+      candidates.set(a.id, c);
     }
   }
-  return articles;
+  const ranked = [...candidates.values()].sort((x, y) => y.score - x.score).slice(0, limit);
+  return [...articles, ...ranked.map((c) => c.article)];
 }
 
 export function searchRefDocs(repo: Repository, query: string, limit: number = DEFAULT_LIMITS.refDocs) {
@@ -154,7 +172,7 @@ export function searchAll(repo: Repository, query: string, sources: KbSource[] =
 
   if (want.has("glossary")) sections.push(`## GLOSSARY\n${formatGlossary(repo.getMatchingTermsForQuery(query))}`);
   if (want.has("qa")) sections.push(`## Q&A (from resolved support tickets)\n${formatQA(qa)}`);
-  if (want.has("articles")) sections.push(`## KB ARTICLES\n${formatArticles(searchArticles(repo, query))}`);
+  if (want.has("articles")) sections.push(`## KB ARTICLES (truncated — use get_article for full text)\n${formatArticles(searchArticles(repo, query), 1200)}`);
   if (want.has("ref_docs")) sections.push(`## REFERENCE DOCS\n${formatRefDocs(searchRefDocs(repo, query))}`);
   if (want.has("videos")) sections.push(`## VIDEO GUIDES\n${formatVideoGuides(searchVideoGuides(repo, query))}`);
   if (want.has("rules")) {

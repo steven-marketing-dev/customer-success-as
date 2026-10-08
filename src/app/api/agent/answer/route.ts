@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Repository } from "@/lib/db/repository";
+import { searchArticles } from "@/lib/kb/retrieval";
 import { getDb, type QAPair } from "@/lib/db/index";
 import { streamChat } from "@/lib/ai/provider";
 import { groundingRules } from "@/lib/ai/groundingRules";
@@ -40,16 +41,9 @@ export async function POST(req: NextRequest) {
   // --- Retrieval (mirrors /api/agent/chat) ---
   const results = repo.searchByKeywords(question, 8);
 
-  const searchedArticles = repo.searchKBArticles(question, 3);
+  // Glossary terms + KB articles (keyword matches plus top term-linked ones, capped)
   const matchedTerms = repo.getMatchingTermsForQuery(question);
-  const seenArticleIds = new Set(searchedArticles.map((a) => a.id));
-  for (const a of matchedTerms.flatMap((t) => repo.getArticlesForTerm(t.id))) {
-    if (!seenArticleIds.has(a.id)) {
-      searchedArticles.push(a);
-      seenArticleIds.add(a.id);
-    }
-  }
-  const articles = searchedArticles;
+  const articles = searchArticles(repo, question, 3, matchedTerms);
 
   let globalRules: Awaited<ReturnType<typeof repo.getGlobalBehavioralCards>> = [];
   let categoryRules: typeof globalRules = [];
