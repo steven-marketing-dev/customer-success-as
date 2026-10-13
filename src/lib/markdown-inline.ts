@@ -63,3 +63,26 @@ export function renderMarkdown(text: string): string {
 
   return result.join("");
 }
+
+/** Plain-text version of an agent answer for the clipboard: drops the internal
+ *  SOURCES/REFS/ARTICLES/VIDEOS blocks and markdown markers, keeps list markers,
+ *  and turns links into "text (url)". */
+export function markdownToPlainText(text: string): string {
+  let out = text
+    .replace(/\n?(SOURCES|REFS|ARTICLES|VIDEOS):\s*\[[^\]]*\]?\s*/gm, "")
+    .replace(/```\w*\n([\s\S]*?)```/g, (_m, code) => code.trimEnd())
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (_m, label, url) => (label === url ? url : `${label} (${url})`))
+    .replace(/\*{3}(.+?)\*{3}/g, "$1")
+    .replace(/_{3}(.+?)_{3}/g, "$1")
+    .replace(/\*{2}(.+?)\*{2}/g, "$1")
+    .replace(/_{2}(.+?)_{2}/g, "$1")
+    .replace(/(?<!\w)\*([^*\n]+)\*(?!\w)/g, "$1")
+    .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, "$1")
+    .replace(/^#{1,6}\s+(.+)$/gm, "$1")
+    .replace(/^\s*[-*_]{3,}\s*$/gm, "")
+    .replace(/^(\s*)\*\s+/gm, "$1- ");
+
+  out = out.replace(/\n{3,}/g, "\n\n");
+  return out.trim();
+}

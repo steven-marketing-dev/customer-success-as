@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect, FormEvent, useCallback, useImperativeHandle, forwardRef } from "react";
-import { Send, Bot, User, Loader2, BookOpen, AlertCircle, Globe, Tag, Flag, Check, Sparkles, Plus, MessageSquare, Trash2, Star, ChevronLeft, ChevronRight, ChevronDown, Users, Paperclip, Mail } from "lucide-react";
+import { Send, Bot, User, Loader2, BookOpen, AlertCircle, Globe, Tag, Flag, Check, Sparkles, Plus, MessageSquare, Trash2, Star, ChevronLeft, ChevronRight, ChevronDown, Users, Paperclip, Mail, Copy } from "lucide-react";
 import { type QAItem } from "./QACard";
 import EmailDraftModal from "./EmailDraftModal";
-import { renderMarkdown } from "@/lib/markdown-inline";
+import { renderMarkdown, markdownToPlainText } from "@/lib/markdown-inline";
 
 interface ArticleRef {
   id: number;
@@ -229,6 +229,43 @@ function StarRating({ messageId, initialRating }: { messageId: number | null | u
         </div>
       )}
     </div>
+  );
+}
+
+function CopyAnswerButton({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+  const handleCopy = async () => {
+    const text = markdownToPlainText(content);
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch {
+      // Fallback for non-secure contexts or denied clipboard permission
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { ok = document.execCommand("copy"); } catch { ok = false; }
+      document.body.removeChild(ta);
+    }
+    if (!ok) return;
+    setCopied(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <button onClick={handleCopy} title="Copy answer as plain text" className="flex items-center gap-1 rounded-md bg-mint-50 border border-mint-200 px-2 py-0.5 text-[11px] font-medium text-mint-700 hover:bg-mint-100 transition-colors">
+      {copied ? <Check size={11} /> : <Copy size={11} />}<span>{copied ? "Copied" : "Copy"}</span>
+    </button>
   );
 }
 
@@ -893,6 +930,7 @@ export const AgentPanel = forwardRef<AgentPanelHandle, { user: AuthUser | null }
 
                           {/* Inline actions */}
                           <div className="flex items-center gap-2 ml-auto">
+                            <CopyAnswerButton content={msg.content} />
                             <EmailDraftButton messageId={msg.messageId} />
                             {(() => {
                               const corrData = corrections[i];

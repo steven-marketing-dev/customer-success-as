@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { Repository } from "@/lib/db/repository";
 import { requireAuth } from "@/lib/auth";
 import { getValidAccessToken, createGmailDraft } from "@/lib/gmail/client";
+import { dedupeKey, runOnce } from "@/lib/dedupe";
 
 export async function POST(req: NextRequest) {
   const session = requireAuth(req);
@@ -21,14 +22,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { draftId } = await createGmailDraft(
-      tokenResult.accessToken,
-      subject,
-      body,
-      tokenResult.email ?? ""
+    // A repeated submit of the same draft returns the first draft instead of creating another
+    const { value: { draftId }, duplicate } = await runOnce(
+      dedupeKey("gmail-draft", session.userId, subject, body),
+      () => createGmailDraft(tokenResult.accessToken, subject, body, tokenResult.email ?? "")
     );
+    if (duplicate) console.warn("[email-draft/gmail] Duplicate submit ignored", { userId: session.userId, draftId });
 
-    return NextResponse.json({ success: true, draftId });
+    return NextResponse.json({ success: true, draftId, duplicate });
   } catch (err) {
     console.error("[email-draft/gmail] Error:", err);
 

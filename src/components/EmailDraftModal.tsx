@@ -46,15 +46,21 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadPickerRef = useRef<HTMLDivElement>(null);
   const sendButtonRef = useRef<HTMLButtonElement>(null);
+  // Synchronous lock: state-based `disabled` only applies after a re-render, so a fast
+  // double click (or Enter + click) could fire two saves before the button disables
+  const submittingRef = useRef(false);
 
-  // Generate initial draft on mount
+  // Generate initial draft on mount. The cleanup aborts a superseded run (StrictMode mounts
+  // effects twice in dev), so a late second response can't replace the draft being edited
   useEffect(() => {
+    const controller = new AbortController();
     (async () => {
       try {
         const res = await fetch("/api/agent/email-draft", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ messageId }),
+          signal: controller.signal,
         });
         if (!res.ok) {
           const data = await res.json();
@@ -65,11 +71,13 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
         setSubject(data.subject);
         setBody(data.body);
       } catch {
+        if (controller.signal.aborted) return;
         setGenerateError("Network error");
       } finally {
-        setIsGenerating(false);
+        if (!controller.signal.aborted) setIsGenerating(false);
       }
     })();
+    return () => controller.abort();
   }, [messageId]);
 
   // Set body HTML in contentEditable after generation/refinement
@@ -106,6 +114,8 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
 
   // Gmail draft
   const handleGmailDraft = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setDestination("gmail-saving");
     setResult(null);
     try {
@@ -119,6 +129,7 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
         const data = await res.json();
         setResult({ type: "error", message: data.error === "gmail_not_connected" ? "Connect Gmail in My Profile first" : data.error || "Failed" });
         setDestination("idle");
+        submittingRef.current = false;
         return;
       }
       setResult({ type: "gmail-success", message: "Draft saved to Gmail" });
@@ -126,6 +137,7 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
     } catch {
       setResult({ type: "error", message: "Network error" });
       setDestination("idle");
+      submittingRef.current = false;
     }
   };
 
@@ -167,7 +179,8 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
 
   // HubSpot reply
   const handleHubspotReply = async () => {
-    if (!selectedThread) return;
+    if (!selectedThread || submittingRef.current) return;
+    submittingRef.current = true;
     setDestination("hubspot-sending");
     setResult(null);
     try {
@@ -189,6 +202,7 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
         const data = await res.json();
         setResult({ type: "error", message: data.error || "Failed to send reply" });
         setDestination("hubspot-selecting");
+        submittingRef.current = false;
         return;
       }
       setResult({ type: "hubspot-success", message: `Reply sent to ${selectedThread.contactName || selectedThread.contactEmail || "thread"}` });
@@ -196,6 +210,7 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
     } catch {
       setResult({ type: "error", message: "Network error" });
       setDestination("hubspot-selecting");
+      submittingRef.current = false;
     }
   };
 
