@@ -1,5 +1,33 @@
 import { generateJSON } from "./provider";
 
+/** Reads the model's draft. The body is HTML, and asking for it inside JSON broke whenever the
+ *  answer quoted UI labels ("Edit Status"): the model left the quotes unescaped and JSON.parse
+ *  threw. So the prompt asks for SUBJECT:/BODY: blocks; valid JSON is still accepted. */
+export function parseDraft(raw: string): { subject: string; body: string } {
+  const cleaned = raw.replace(/```(?:json|html)?\n?/g, "").trim();
+
+  if (cleaned.startsWith("{")) {
+    try {
+      const json = JSON.parse(cleaned) as Record<string, unknown>;
+      const pick = (k: string) => {
+        const key = Object.keys(json).find((x) => x.toLowerCase() === k);
+        return key && typeof json[key] === "string" ? (json[key] as string).trim() : "";
+      };
+      return { subject: pick("subject"), body: pick("body") };
+    } catch {
+      // JSON with unescaped quotes inside the HTML: take the fields by position
+      const subject = cleaned.match(/"subject"\s*:\s*"([\s\S]*?)"\s*,\s*"body"/i)?.[1] ?? "";
+      const body = cleaned.match(/"body"\s*:\s*"([\s\S]*)"\s*}\s*$/i)?.[1] ?? "";
+      if (body) return { subject: subject.trim(), body: body.replace(/\\n/g, "\n").replace(/\\"/g, '"').trim() };
+    }
+  }
+
+  const subject = cleaned.match(/^\s*SUBJECT:\s*(.+)$/im)?.[1].trim() ?? "";
+  const bodyStart = cleaned.search(/^\s*BODY:/im);
+  const body = bodyStart >= 0 ? cleaned.slice(bodyStart).replace(/^\s*BODY:\s*/i, "").trim() : "";
+  return { subject, body };
+}
+
 export async function generateEmailDraft(params: {
   agentAnswer: string;
   userQuestion: string;
@@ -23,7 +51,10 @@ ${hasArticles ? `- Include a "Helpful Resources" section near the end of the bod
 ${calendlyUrl ? `- AFTER the articles (if any), include as the very last line: "If you'd like to discuss this further, feel free to <a href="${calendlyUrl}">schedule a call</a>." CRITICAL: Use EXACTLY this URL, do NOT modify or create any other Calendly link.` : ""}
 - Format the body as HTML with proper paragraphs (<p> tags), lists (<ul>/<ol>) where appropriate
 - Do NOT include any citation lines (SOURCES, REFS, ARTICLES, VIDEOS) from the original response
-- Respond with JSON only: { "subject": "...", "body": "..." }`;
+- Respond in exactly this format, with no JSON and no code fences:
+SUBJECT: <subject line>
+BODY:
+<HTML body>`;
 
   const prompt = `Original customer question:
 ${userQuestion}
@@ -33,10 +64,7 @@ ${agentAnswer}
 ${hasArticles ? `\nKB Articles to include:\n${articles!.map((a) => `- ${a.title}: ${a.url}`).join("\n")}` : ""}`;
 
   const raw = await generateJSON(system, prompt, { smart: true });
-
-  // Parse and clean the JSON — handle markdown code fences
-  const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-  const parsed = JSON.parse(cleaned);
+  const parsed = parseDraft(raw);
 
   return {
     subject: parsed.subject || "Follow-up from support",
@@ -63,7 +91,10 @@ Rules:
 - Do NOT include any sign-off, signature, or sender name at the end
 ${calendlyUrl ? `- If the Calendly link is present, keep it EXACTLY as: ${calendlyUrl} Do NOT modify, replace, or create any other Calendly link.` : ""}
 - Format the body as HTML with proper paragraphs (<p> tags), lists (<ul>/<ol>) where appropriate
-- Respond with JSON only: { "subject": "...", "body": "..." }`;
+- Respond in exactly this format, with no JSON and no code fences:
+SUBJECT: <subject line>
+BODY:
+<HTML body>`;
 
   const prompt = `Current email draft:
 Subject: ${currentSubject}
@@ -76,8 +107,7 @@ Customer question: ${userQuestion}
 Agent answer: ${agentAnswer}`;
 
   const raw = await generateJSON(system, prompt, { smart: true });
-  const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-  const parsed = JSON.parse(cleaned);
+  const parsed = parseDraft(raw);
 
   return {
     subject: parsed.subject || currentSubject,
