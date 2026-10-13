@@ -46,6 +46,9 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadPickerRef = useRef<HTMLDivElement>(null);
   const sendButtonRef = useRef<HTMLButtonElement>(null);
+  // Synchronous lock: state-based `disabled` only applies after a re-render, so a fast
+  // double click (or Enter + click) could fire two saves before the button disables
+  const submittingRef = useRef(false);
 
   // Generate initial draft on mount
   useEffect(() => {
@@ -106,6 +109,8 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
 
   // Gmail draft
   const handleGmailDraft = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setDestination("gmail-saving");
     setResult(null);
     try {
@@ -119,6 +124,7 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
         const data = await res.json();
         setResult({ type: "error", message: data.error === "gmail_not_connected" ? "Connect Gmail in My Profile first" : data.error || "Failed" });
         setDestination("idle");
+        submittingRef.current = false;
         return;
       }
       setResult({ type: "gmail-success", message: "Draft saved to Gmail" });
@@ -126,6 +132,7 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
     } catch {
       setResult({ type: "error", message: "Network error" });
       setDestination("idle");
+      submittingRef.current = false;
     }
   };
 
@@ -167,7 +174,8 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
 
   // HubSpot reply
   const handleHubspotReply = async () => {
-    if (!selectedThread) return;
+    if (!selectedThread || submittingRef.current) return;
+    submittingRef.current = true;
     setDestination("hubspot-sending");
     setResult(null);
     try {
@@ -189,6 +197,7 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
         const data = await res.json();
         setResult({ type: "error", message: data.error || "Failed to send reply" });
         setDestination("hubspot-selecting");
+        submittingRef.current = false;
         return;
       }
       setResult({ type: "hubspot-success", message: `Reply sent to ${selectedThread.contactName || selectedThread.contactEmail || "thread"}` });
@@ -196,6 +205,7 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
     } catch {
       setResult({ type: "error", message: "Network error" });
       setDestination("hubspot-selecting");
+      submittingRef.current = false;
     }
   };
 
