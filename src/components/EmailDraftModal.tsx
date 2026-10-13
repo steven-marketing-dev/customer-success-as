@@ -50,14 +50,17 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
   // double click (or Enter + click) could fire two saves before the button disables
   const submittingRef = useRef(false);
 
-  // Generate initial draft on mount
+  // Generate initial draft on mount. The cleanup aborts a superseded run (StrictMode mounts
+  // effects twice in dev), so a late second response can't replace the draft being edited
   useEffect(() => {
+    const controller = new AbortController();
     (async () => {
       try {
         const res = await fetch("/api/agent/email-draft", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ messageId }),
+          signal: controller.signal,
         });
         if (!res.ok) {
           const data = await res.json();
@@ -68,11 +71,13 @@ export default function EmailDraftModal({ messageId, onClose }: EmailDraftModalP
         setSubject(data.subject);
         setBody(data.body);
       } catch {
+        if (controller.signal.aborted) return;
         setGenerateError("Network error");
       } finally {
-        setIsGenerating(false);
+        if (!controller.signal.aborted) setIsGenerating(false);
       }
     })();
+    return () => controller.abort();
   }, [messageId]);
 
   // Set body HTML in contentEditable after generation/refinement
