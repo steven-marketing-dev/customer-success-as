@@ -709,40 +709,58 @@ export class Repository {
     content: string;
     category: string | null;
     content_hash: string;
+    /** Only the Product Fruits sync sets this; the sitemap scraper leaves the stored value alone. */
+    source_modified_at?: string | null;
   }): { action: "created" | "updated" | "unchanged"; articleId: number } {
     // Identity priority: source_id (stable across slug changes) → url (legacy fallback).
-    let existing: { id: number; content_hash: string; url: string; source_id: number | null } | undefined;
+    type Existing = { id: number; content_hash: string; url: string; source_id: number | null; title: string; category: string | null };
+    let existing: Existing | undefined;
+    const cols = "id, content_hash, url, source_id, title, category";
     if (data.source_id != null) {
       existing = this.db
-        .prepare("SELECT id, content_hash, url, source_id FROM kb_articles WHERE source_id = ?")
-        .get(data.source_id) as typeof existing;
+        .prepare(`SELECT ${cols} FROM kb_articles WHERE source_id = ?`)
+        .get(data.source_id) as Existing | undefined;
     }
     if (!existing) {
       existing = this.db
-        .prepare("SELECT id, content_hash, url, source_id FROM kb_articles WHERE url = ?")
-        .get(data.url) as typeof existing;
+        .prepare(`SELECT ${cols} FROM kb_articles WHERE url = ?`)
+        .get(data.url) as Existing | undefined;
     }
+    const modifiedAt = data.source_modified_at ?? null;
 
     if (existing) {
       const urlChanged = existing.url !== data.url;
       const sourceIdChanged = existing.source_id !== data.source_id && data.source_id != null;
-      if (existing.content_hash === data.content_hash && !urlChanged && !sourceIdChanged) {
+      const titleChanged = existing.title !== data.title;
+      // A null category (scraper without category data) never overwrites a known one.
+      const categoryChanged = data.category != null && existing.category !== data.category;
+      if (existing.content_hash === data.content_hash && !urlChanged && !sourceIdChanged && !titleChanged && !categoryChanged) {
+        if (modifiedAt) {
+          this.db.prepare("UPDATE kb_articles SET source_modified_at=? WHERE id=?").run(modifiedAt, existing.id);
+        }
         return { action: "unchanged", articleId: existing.id };
       }
       this.db
         .prepare(
-          `UPDATE kb_articles SET url=?, source_id=COALESCE(?, source_id), title=?, content=?, category=?, content_hash=?, scraped_at=unixepoch() WHERE id=?`
+          `UPDATE kb_articles SET url=?, source_id=COALESCE(?, source_id), title=?, content=?, category=COALESCE(?, category), content_hash=?, source_modified_at=COALESCE(?, source_modified_at), scraped_at=unixepoch() WHERE id=?`
         )
-        .run(data.url, data.source_id, data.title, data.content, data.category, data.content_hash, existing.id);
+        .run(data.url, data.source_id, data.title, data.content, data.category, data.content_hash, modifiedAt, existing.id);
       return { action: "updated", articleId: existing.id };
     }
 
     const info = this.db
       .prepare(
-        `INSERT INTO kb_articles (url, source_id, title, content, category, content_hash) VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO kb_articles (url, source_id, title, content, category, content_hash, source_modified_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(data.url, data.source_id, data.title, data.content, data.category, data.content_hash);
+      .run(data.url, data.source_id, data.title, data.content, data.category, data.content_hash, modifiedAt);
     return { action: "created", articleId: Number(info.lastInsertRowid) };
+  }
+
+  /** Identity and freshness of every stored article — used by the Product Fruits sync to skip unchanged ones. */
+  getKBArticleSyncIndex(): Array<{ id: number; url: string; source_id: number | null; source_modified_at: string | null }> {
+    return this.db
+      .prepare("SELECT id, url, source_id, source_modified_at FROM kb_articles")
+      .all() as Array<{ id: number; url: string; source_id: number | null; source_modified_at: string | null }>;
   }
 
   /** Rows that pre-date the source_id column — used by the scraper's one-time backfill. */

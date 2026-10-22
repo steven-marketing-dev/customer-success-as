@@ -8,6 +8,7 @@ import { extractProcessCards } from "./ai/processCardExtractor";
 import { Repository } from "./db/repository";
 import { getDb, rebuildFtsIndexes } from "./db/index";
 import { runScrape } from "./scraper";
+import { isProductFruitsConfigured, syncFromProductFruits } from "./productFruits";
 import { extractLoomUrls, fetchLoomTranscript } from "./loom-fetcher";
 import crypto from "crypto";
 
@@ -135,17 +136,32 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
 
   // ── Scrape KB mode: scrape public knowledge base articles ────────────────
   if (mode === "scrape-kb") {
-    log("Starting KB article scraping...");
-    const scrapeStats = await runScrape((event) => {
-      if (event.type === "log" || event.type === "progress") {
-        log(event.message ?? "");
+    // Product Fruits API first; the sitemap scraper is the fallback when the token is
+    // missing or the API call fails.
+    let pfDone = false;
+    if (isProductFruitsConfigured()) {
+      log("Syncing KB articles from the Product Fruits API...");
+      try {
+        const pfStats = await syncFromProductFruits({ onLog: log });
+        stats.qa_extracted = pfStats.created + pfStats.updated;
+        pfDone = true;
+      } catch (err) {
+        log(`✗ Product Fruits sync failed (${err}) — falling back to the sitemap scraper`);
       }
-      if (event.type === "progress" && event.current && event.total) {
-        emit({ type: "progress", current: event.current, total: event.total, message: event.message ?? "" });
-      }
-    });
-    log(`✓ Scraping complete: ${scrapeStats.created} created, ${scrapeStats.updated} updated, ${scrapeStats.unchanged} unchanged, ${scrapeStats.failed} failed`);
-    stats.qa_extracted = scrapeStats.created + scrapeStats.updated;
+    }
+    if (!pfDone) {
+      log("Starting KB article scraping...");
+      const scrapeStats = await runScrape((event) => {
+        if (event.type === "log" || event.type === "progress") {
+          log(event.message ?? "");
+        }
+        if (event.type === "progress" && event.current && event.total) {
+          emit({ type: "progress", current: event.current, total: event.total, message: event.message ?? "" });
+        }
+      });
+      log(`✓ Scraping complete: ${scrapeStats.created} created, ${scrapeStats.updated} updated, ${scrapeStats.unchanged} unchanged, ${scrapeStats.failed} failed`);
+      stats.qa_extracted = scrapeStats.created + scrapeStats.updated;
+    }
 
     // Auto-extract glossary terms from scraped articles
     log("Extracting glossary terms from articles...");

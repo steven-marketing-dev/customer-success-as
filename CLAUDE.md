@@ -27,7 +27,7 @@ npm run dev   # → http://localhost:3000
 
 ## Variables (.env.local)
 
-AI_PROVIDER (claude|gemini), ANTHROPIC_API_KEY, GOOGLE_API_KEY, HUBSPOT_ACCESS_TOKEN, DATABASE_PATH, RECLUSTER_THRESHOLD, SYNC_LIMIT, AUTH_SECRET, MASTER_USERNAME, MASTER_PASSWORD, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REDIRECT_URI, GMAIL_TOKEN_ENCRYPTION_KEY, NEXT_PUBLIC_HUBSPOT_HUB_ID, MCP_ACCESS_TOKEN
+AI_PROVIDER (claude|gemini), ANTHROPIC_API_KEY, GOOGLE_API_KEY, HUBSPOT_ACCESS_TOKEN, DATABASE_PATH, RECLUSTER_THRESHOLD, SYNC_LIMIT, AUTH_SECRET, MASTER_USERNAME, MASTER_PASSWORD, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REDIRECT_URI, GMAIL_TOKEN_ENCRYPTION_KEY, NEXT_PUBLIC_HUBSPOT_HUB_ID, MCP_ACCESS_TOKEN, PRODUCT_FRUITS_API_TOKEN, KB_SYNC_INTERVAL_HOURS
 
 ## UI: 5 tabs
 
@@ -35,7 +35,7 @@ AI_PROVIDER (claude|gemini), ANTHROPIC_API_KEY, GOOGLE_API_KEY, HUBSPOT_ACCESS_T
 2. **Knowledge Base** — Search + category filters + expandable cards. Sub-tabs: Q&A, Articles, **Reference Docs** (Google Doc imports), **Video Guides** (Loom-derived process cards)
 3. **Glossary** — Term management with auto-linking across Q&A, articles, and process cards
 4. **Agent** — AI chat with KB context, PDF upload, star ratings, correction flow, email draft generation. Sub-tabs: Chat, Rules (behavioral cards)
-5. **Pipeline** — Incremental/full sync + re-clustering + KB scraping (with stale-article deletion via `source_id`), real-time SSE log
+5. **Pipeline** — Incremental/full sync + re-clustering + KB sync ("Scrape KB": Product Fruits API when `PRODUCT_FRUITS_API_TOKEN` is set, sitemap scraper as fallback; stale-article deletion via `source_id`), real-time SSE log
 
 ## Key features
 
@@ -72,6 +72,7 @@ tickets, qa_pairs, categories, qa_category_map, sync_state, terms, term_qa_map, 
 **Dashboard/Insights**: `GET /api/dashboard/insights`, `GET /api/dashboard/customer/[slug]`, `POST /api/dashboard/clarity/sync`
 **KB content**: `/api/qa`, `/api/articles`, `/api/ref-docs`, `/api/process-cards`, `/api/behavioral-cards`, `/api/terms`, `/api/kb`, `/api/search`, `/api/stats`
 **Pipeline**: `GET /api/pipeline` (SSE)
+**KB sync (machine, `x-api-key` = N8N_API_KEY)**: `POST /api/kb/sync` `{ dryRun? }` — incremental sync from the Product Fruits KB API (`src/lib/productFruits.ts`); also scheduled every `KB_SYNC_INTERVAL_HOURS` (default 6) by `src/instrumentation-node.ts` in production
 **Conversations**: `/api/conversations`, `/api/conversations/[id]`, `/api/messages`
 **Auth/User**: `/api/auth/*`, `/api/tours`, `/api/db`
 **Widget (public)**: `/api/widget/config`, `/api/widget/chat`, `/api/widget/rate`, `/api/widget/ticket`
