@@ -2,7 +2,7 @@ import * as cheerio from "cheerio";
 import { createHash } from "crypto";
 import { Repository } from "./db/repository";
 
-const BASE_URL = "https://knowledge-base.discovered.ai";
+export const BASE_URL = "https://knowledge-base.discovered.ai";
 const SITEMAP_URL = `${BASE_URL}/sitemap.xml`;
 const CONCURRENCY = 5;
 
@@ -14,8 +14,16 @@ export interface ScrapeProgress {
   stats?: { created: number; updated: number; unchanged: number; failed: number };
 }
 
-function computeHash(content: string): string {
+export function computeHash(content: string): string {
   return createHash("sha256").update(content).digest("hex");
+}
+
+/** Plain text stored in kb_articles.content: lead + article HTML stripped of media and markup. */
+export function articleHtmlToText(htmlContent: string, lead: string): string {
+  const $content = cheerio.load(htmlContent);
+  $content("script, style, iframe, figure, img").remove();
+  const textContent = $content.text().replace(/\s+/g, " ").trim();
+  return lead ? `${lead}\n\n${textContent}` : textContent;
 }
 
 /** Fetch sitemap.xml and extract article URLs */
@@ -85,11 +93,7 @@ async function scrapeArticle(url: string): Promise<FetchOutcome> {
         const parsedId = typeof rawId === "number" ? rawId : typeof rawId === "string" ? parseInt(rawId, 10) : NaN;
         const sourceId = Number.isFinite(parsedId) ? parsedId : null;
 
-        // Convert HTML content to plain text
-        const $content = cheerio.load(htmlContent);
-        $content("script, style, iframe, figure, img").remove();
-        const textContent = $content.text().replace(/\s+/g, " ").trim();
-        const fullText = lead ? `${lead}\n\n${textContent}` : textContent;
+        const fullText = articleHtmlToText(htmlContent, lead);
 
         // Extract category from allCategories
         let category: string | null = null;

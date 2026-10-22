@@ -101,6 +101,8 @@ export interface KBArticle {
   id: number;
   url: string;
   source_id: number | null;
+  /** Product Fruits lastModified of the published content; null for rows written by the sitemap scraper. */
+  source_modified_at: string | null;
   title: string;
   content: string;
   category: string | null;
@@ -671,6 +673,7 @@ function initDb(db: Database.Database) {
     "ALTER TABLE tickets ADD COLUMN company_name TEXT",
     "ALTER TABLE qa_pairs ADD COLUMN root_cause TEXT",
     "ALTER TABLE kb_articles ADD COLUMN source_id INTEGER",
+    "ALTER TABLE kb_articles ADD COLUMN source_modified_at TEXT",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }
