@@ -5,8 +5,8 @@ import { searchArticles } from "@/lib/kb/retrieval";
 import { getDb, type QAPair } from "@/lib/db/index";
 import { streamChat, type ChatMessage } from "@/lib/ai/provider";
 import { groundingRules } from "@/lib/ai/groundingRules";
-import { corsHeaders, resolveInstallation, checkAndRecordRate, hashIp, extractClientIp } from "@/lib/widget-auth";
-import { sanitizeCalendlyLinks } from "@/lib/calendly";
+import { corsHeaders, resolveInstallation, checkAndRecordRate, hashIp, extractClientIp, readWidgetContext } from "@/lib/widget-auth";
+import { sanitizeCalendlyLinks, withWidgetUtm } from "@/lib/calendly";
 
 export const maxDuration = 60;
 
@@ -37,9 +37,11 @@ export async function POST(req: NextRequest) {
   // JSON only (no PDF upload for anonymous widget)
   let question: string;
   let history: ChatMessage[] = [];
+  let visitor: ReturnType<typeof readWidgetContext>;
   try {
-    const body = await req.json() as { question?: string; history?: ChatMessage[] };
+    const body = await req.json() as { question?: string; history?: ChatMessage[]; sessionId?: string; userEmail?: string; account?: string };
     question = (body.question ?? "").trim();
+    visitor = readWidgetContext(body);
     if (Array.isArray(body.history)) {
       history = body.history
         .slice(-MAX_HISTORY_MESSAGES)
@@ -141,6 +143,8 @@ export async function POST(req: NextRequest) {
     : "No relevant entries found in the knowledge base.";
 
   const productName = installation.product_name || "this product";
+  // Scheduling link tagged with the widget session, so a booking can be traced back (DIS-234)
+  const calendlyUrl = installation.calendly_url ? withWidgetUtm(installation.calendly_url, installation.id, visitor.session_id) : null;
 
   const system = `You are the help assistant for ${productName}. You are speaking directly to a user of ${productName} — be friendly, concise, and practical. Answer based ONLY on the knowledge base entries and documentation provided below.
 
@@ -264,7 +268,7 @@ ${context}
             .replace(/\n?ARTICLES:\s*\[[^\]]*\]/gm, "")
             .replace(/\n?VIDEOS:\s*\[[^\]]*\]/gm, "")
             .trim(),
-          installation.calendly_url
+          calendlyUrl
         );
 
         const doneArticles = citedArticles.map((a) => ({ id: a.id, title: a.title, url: a.url, category: a.category }));
@@ -279,7 +283,7 @@ ${context}
             answer: cleanAnswer,
             articles: doneArticles.map((a) => ({ id: a.id, title: a.title, url: a.url })),
             ip_hash: ipHash,
-          });
+          }, visitor);
         } catch { /* analytics logging is best-effort */ }
 
         send({
@@ -293,6 +297,18 @@ ${context}
           videos: doneVideos,
         });
       } catch (err) {
+        // Keep the question even when the answer failed, so reports count it as needing follow-up
+        try {
+          repo.insertWidgetQuestion({
+            installation_id: installation.id,
+            exchange_id: exchangeId,
+            question,
+            answer: "",
+            articles: [],
+            ip_hash: ipHash,
+            status: "error",
+          }, visitor);
+        } catch { /* analytics logging is best-effort */ }
         send({ type: "error", message: String(err) });
       } finally {
         controller.close();

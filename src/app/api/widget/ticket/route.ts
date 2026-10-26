@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { HubSpotClient } from "@/lib/hubspot";
 import { Repository } from "@/lib/db/repository";
 import { getDb } from "@/lib/db/index";
-import { corsHeaders, resolveInstallation, extractClientIp, hashIp, checkAndRecordRate } from "@/lib/widget-auth";
+import { corsHeaders, resolveInstallation, extractClientIp, hashIp, checkAndRecordRate, readWidgetContext } from "@/lib/widget-auth";
 import { isIntakeEmailConfigured, getInboxAddress, sendWidgetIntakeEmail } from "@/lib/email/intake";
 
 const MAX_SUBJECT = 200;
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  let body: { subject?: string; description?: string; email?: string; sourceUrl?: string };
+  let body: { subject?: string; description?: string; email?: string; sourceUrl?: string; sessionId?: string; userEmail?: string; account?: string };
   try { body = await req.json(); }
   catch {
     return new Response(JSON.stringify({ error: "Invalid JSON" }), {
@@ -53,6 +53,8 @@ export async function POST(req: NextRequest) {
   if (!subject) return new Response(JSON.stringify({ error: "Subject is required" }), { status: 400, headers: { "Content-Type": "application/json", ...cors } });
   if (!description) return new Response(JSON.stringify({ error: "Description is required" }), { status: 400, headers: { "Content-Type": "application/json", ...cors } });
   if (!email || !isValidEmail(email)) return new Response(JSON.stringify({ error: "A valid email is required" }), { status: 400, headers: { "Content-Type": "application/json", ...cors } });
+
+  const visitor = readWidgetContext(body);
 
   // Preferred path: forward the submission into the connected HubSpot inbox as a
   // real inbound email. HubSpot creates a native email-channel thread + ticket, so
@@ -79,6 +81,7 @@ export async function POST(req: NextRequest) {
       const footer: string[] = [`Visitor email: ${email}`];
       if (installation.product_name) footer.push(`Product: ${installation.product_name}`);
       if (sourceUrl) footer.push(`Page: ${sourceUrl}`);
+      if (visitor.session_id) footer.push(`Widget session: ${visitor.session_id}`);
       footer.push("Submitted via the help widget");
       const text = `${description}\n\n—\n${footer.join("\n")}`;
 
@@ -109,8 +112,8 @@ export async function POST(req: NextRequest) {
         event_type: "email_submit",
         source_url: sourceUrl,
         ip_hash: ipHash,
-        metadata: { subjectLength: subject.length, via },
-      });
+        metadata: { subject, visitorEmail: email, via },
+      }, { ...visitor, user_email: visitor.user_email ?? email.toLowerCase() });
     } catch (e) {
       console.warn("[widget/ticket] event record failed:", e);
     }

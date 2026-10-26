@@ -27,7 +27,7 @@ npm run dev   # → http://localhost:3000
 
 ## Variables (.env.local)
 
-AI_PROVIDER (claude|gemini), ANTHROPIC_API_KEY, GOOGLE_API_KEY, HUBSPOT_ACCESS_TOKEN, DATABASE_PATH, RECLUSTER_THRESHOLD, SYNC_LIMIT, AUTH_SECRET, MASTER_USERNAME, MASTER_PASSWORD, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REDIRECT_URI, GMAIL_TOKEN_ENCRYPTION_KEY, NEXT_PUBLIC_HUBSPOT_HUB_ID, MCP_ACCESS_TOKEN, PRODUCT_FRUITS_API_TOKEN, KB_SYNC_INTERVAL_HOURS
+AI_PROVIDER (claude|gemini), ANTHROPIC_API_KEY, GOOGLE_API_KEY, HUBSPOT_ACCESS_TOKEN, DATABASE_PATH, RECLUSTER_THRESHOLD, SYNC_LIMIT, AUTH_SECRET, MASTER_USERNAME, MASTER_PASSWORD, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REDIRECT_URI, GMAIL_TOKEN_ENCRYPTION_KEY, NEXT_PUBLIC_HUBSPOT_HUB_ID, MCP_ACCESS_TOKEN, PRODUCT_FRUITS_API_TOKEN, KB_SYNC_INTERVAL_HOURS, WIDGET_REPORTS_ENABLED, REPORTS_FROM, WIDGET_REPORTS_ANCHOR, CALENDLY_API_TOKEN, CALENDLY_ORG
 
 ## UI: 5 tabs
 
@@ -57,13 +57,15 @@ AI_PROVIDER (claude|gemini), ANTHROPIC_API_KEY, GOOGLE_API_KEY, HUBSPOT_ACCESS_T
 - **Customer drill-down**: `/api/dashboard/customer/[slug]` returns per-customer ticket history and exec summary.
 - **Microsoft Clarity sync**: Pulls behavioral metrics into `clarity_metrics` table for correlation with tickets.
 - **Embeddable widget**: `/embed/chat` route exposes a chat widget for external sites. Uses `HelpCircle` icon to signal a help/support context. Widget installations managed via the **Widget Installations** panel — each install gets a key, optional KB URL toggle, and rate-limited chat/ticket endpoints. Public origin derived from `GOOGLE_OAUTH_REDIRECT_URI` / forwarded headers for proxy scenarios.
+- **Widget usage reports (DIS-234)**: Email report every 7, 30 and 90 days (exact windows of local days counted from `WIDGET_REPORTS_ANCHOR`), opted in per user in **My Profile → Email reports** (email, timezone, 3 toggles; masters can set them for anyone in Manage Users). Covers all installations: meetings booked/held, KB visits, emails sent, ratings, questions with resolved/follow-up, plus a CSV of every record. Builder `src/lib/widget-usage-report.ts`, hourly job `src/lib/widget-report-scheduler.ts` (on with `WIDGET_REPORTS_ENABLED=1`; `widget_report_sends` UNIQUE(user, length, period_end) keeps it idempotent), sender `src/lib/email/reports.ts`. Preview (master): `GET /api/widget-reports/preview?days=7[&format=csv]`, `POST` emails it to yourself only.
+- **Widget visitor tracking**: the iframe sends an anonymous per-tab `sessionId` (sessionStorage) with every call, plus `userEmail`/`account` when the host page sets `data-user-email` / `data-account` on the widget.js tag; stored on `widget_questions`, `widget_ratings`, `widget_events`, `widget_article_clicks`. Calendly links handed out by the widget carry `utm_source=cs-widget`, `utm_medium=installation-<id>`, `utm_content=<session>`; `src/lib/widget-meetings.ts` reads them back from the Calendly API into `widget_meetings` (held = ended, active, not no-show). `app_meta.widget_tracking_v2_since` records when this tracking started.
 - **Feature Tour System**: Guided tours for new user-facing features (`src/components/TourEngine.tsx`, `src/lib/tours.ts`), tracked in `tour_completions` table.
 - **"What's New" modal**: Highlights recent updates on login.
 - **User profile management**: Each user sets Calendly URL, Gmail connection, and other preferences in My Profile.
 
 ## Database tables
 
-tickets, qa_pairs, categories, qa_category_map, sync_state, terms, term_qa_map, kb_articles (with `source_id` for dedup), term_article_map, correction_logs, behavioral_cards, ref_docs, ref_doc_sections, process_cards, term_process_card_map, users, conversations, messages, message_ratings, tour_completions, widget_installations, widget_ratings, widget_rate_events, gmail_tokens, clarity_metrics, insight_cache
+tickets, qa_pairs, categories, qa_category_map, sync_state, terms, term_qa_map, kb_articles (with `source_id` for dedup), term_article_map, correction_logs, behavioral_cards, ref_docs, ref_doc_sections, process_cards, term_process_card_map, users, conversations, messages, message_ratings, tour_completions, widget_installations, widget_ratings, widget_rate_events, widget_events, widget_questions, widget_article_clicks, widget_meetings, calendly_events_seen, widget_report_sends, app_meta, gmail_tokens, clarity_metrics, insight_cache
 
 ## Key API routes
 
@@ -76,7 +78,7 @@ tickets, qa_pairs, categories, qa_category_map, sync_state, terms, term_qa_map, 
 **Conversations**: `/api/conversations`, `/api/conversations/[id]`, `/api/messages`
 **Auth/User**: `/api/auth/*`, `/api/tours`, `/api/db`
 **Widget (public)**: `/api/widget/config`, `/api/widget/chat`, `/api/widget/rate`, `/api/widget/ticket`
-**Widget admin**: `/api/widget-installations`, `/api/widget-installations/[id]`
+**Widget admin**: `/api/widget-installations`, `/api/widget-installations/[id]`, `/api/widget-reports/preview` (master)
 **MCP (public, token auth)**: `/api/mcp`
 
 ## MCP server (connect Claude to the KB)

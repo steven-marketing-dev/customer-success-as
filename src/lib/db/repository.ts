@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import crypto from "crypto";
-import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion, type GmailToken, type WidgetInstallation, type WidgetRating, type WidgetQuestion, type WidgetArticleClick, type ClarityMetric, type WidgetEventType } from "./index";
+import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion, type GmailToken, type WidgetInstallation, type WidgetRating, type WidgetQuestion, type WidgetArticleClick, type ClarityMetric, type WidgetEventType, type WidgetVisitorContext, type WidgetMeeting, type WidgetReportSend } from "./index";
 
 function normalizeQuestion(q: string): string {
   return q.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, " ").trim().slice(0, 200);
@@ -1112,9 +1112,30 @@ export class Repository {
     return this.db.prepare("SELECT * FROM users ORDER BY created_at ASC").all() as User[];
   }
 
-  updateUserProfile(id: number, data: { calendly_url?: string | null; display_name?: string | null }): User | undefined {
+  updateUserProfile(id: number, data: {
+    calendly_url?: string | null;
+    display_name?: string | null;
+    email?: string | null;
+    timezone?: string | null;
+    report_7d?: boolean;
+    report_30d?: boolean;
+    report_90d?: boolean;
+  }): User | undefined {
     const fields: string[] = [];
     const values: (string | null | number)[] = [];
+
+    for (const key of ["email", "timezone"] as const) {
+      if (data[key] !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(data[key]);
+      }
+    }
+    for (const key of ["report_7d", "report_30d", "report_90d"] as const) {
+      if (data[key] !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(data[key] ? 1 : 0);
+      }
+    }
 
     if (data.calendly_url !== undefined) {
       fields.push("calendly_url = ?");
@@ -1592,14 +1613,20 @@ export class Repository {
     question: string;
     answer: string;
     ip_hash: string;
-  }): void {
+  }, ctx?: WidgetVisitorContext): void {
+    // A 1-star is saved on click and saved again with the feedback, so a later null
+    // feedback never wipes one already given.
     this.db.prepare(`
-      INSERT INTO widget_ratings (installation_id, exchange_id, rating, feedback, question, answer, ip_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO widget_ratings (installation_id, exchange_id, rating, feedback, question, answer, ip_hash, session_id, user_email, account)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(installation_id, exchange_id) DO UPDATE SET
         rating = excluded.rating,
-        feedback = excluded.feedback
-    `).run(data.installation_id, data.exchange_id, data.rating, data.feedback, data.question, data.answer, data.ip_hash);
+        feedback = COALESCE(excluded.feedback, widget_ratings.feedback),
+        session_id = COALESCE(excluded.session_id, widget_ratings.session_id),
+        user_email = COALESCE(excluded.user_email, widget_ratings.user_email),
+        account = COALESCE(excluded.account, widget_ratings.account)
+    `).run(data.installation_id, data.exchange_id, data.rating, data.feedback, data.question, data.answer, data.ip_hash,
+      ctx?.session_id ?? null, ctx?.user_email ?? null, ctx?.account ?? null);
   }
 
   getRecentWidgetRatings(installationId: number, limit = 50): WidgetRating[] {
@@ -1636,11 +1663,12 @@ export class Repository {
     answer: string;
     articles: Array<{ id: number; title: string; url: string }>;
     ip_hash: string;
-  }): number | null {
+    status?: "ok" | "error";
+  }, ctx?: WidgetVisitorContext): number | null {
     try {
       const info = this.db.prepare(
-        `INSERT INTO widget_questions (installation_id, exchange_id, question, question_norm, answer, articles_json, ip_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO widget_questions (installation_id, exchange_id, question, question_norm, answer, articles_json, ip_hash, status, session_id, user_email, account)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         data.installation_id,
         data.exchange_id,
@@ -1649,6 +1677,10 @@ export class Repository {
         data.answer.slice(0, 8000),
         JSON.stringify(data.articles ?? []),
         data.ip_hash,
+        data.status ?? "ok",
+        ctx?.session_id ?? null,
+        ctx?.user_email ?? null,
+        ctx?.account ?? null,
       );
       return Number(info.lastInsertRowid);
     } catch {
@@ -1667,10 +1699,10 @@ export class Repository {
     article_title: string;
     article_url: string;
     ip_hash: string;
-  }): void {
+  }, ctx?: WidgetVisitorContext): void {
     this.db.prepare(
-      `INSERT INTO widget_article_clicks (installation_id, question_id, article_id, article_title, article_url, ip_hash)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO widget_article_clicks (installation_id, question_id, article_id, article_title, article_url, ip_hash, session_id, user_email, account)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       data.installation_id,
       data.question_id,
@@ -1678,6 +1710,9 @@ export class Repository {
       data.article_title.slice(0, 500),
       data.article_url.slice(0, 1000),
       data.ip_hash,
+      ctx?.session_id ?? null,
+      ctx?.user_email ?? null,
+      ctx?.account ?? null,
     );
   }
 
@@ -2359,15 +2394,19 @@ export class Repository {
     source_url: string | null;
     ip_hash: string;
     metadata?: Record<string, unknown> | null;
-  }): void {
+  }, ctx?: WidgetVisitorContext): void {
     this.db.prepare(
-      "INSERT INTO widget_events (installation_id, event_type, source_url, ip_hash, metadata) VALUES (?, ?, ?, ?, ?)"
+      `INSERT INTO widget_events (installation_id, event_type, source_url, ip_hash, metadata, session_id, user_email, account)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       data.installation_id,
       data.event_type,
       data.source_url,
       data.ip_hash,
-      data.metadata ? JSON.stringify(data.metadata) : null
+      data.metadata ? JSON.stringify(data.metadata) : null,
+      ctx?.session_id ?? null,
+      ctx?.user_email ?? null,
+      ctx?.account ?? null,
     );
   }
 
@@ -2420,5 +2459,145 @@ export class Repository {
     ).all(installationId, sinceSeconds) as Array<{ url: string; count: number }>;
 
     return { totals, uniques, daily, topSourceUrls };
+  }
+
+  // ─── Widget Meetings (Calendly bookings tagged by the widget) ─────────────
+
+  hasSeenCalendlyEvent(eventUri: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM calendly_events_seen WHERE event_uri = ?").get(eventUri);
+  }
+
+  markCalendlyEventSeen(eventUri: string, startTime: number): void {
+    this.db.prepare(
+      "INSERT OR REPLACE INTO calendly_events_seen (event_uri, start_time, checked_at) VALUES (?, ?, unixepoch())"
+    ).run(eventUri, startTime);
+  }
+
+  upsertWidgetMeeting(m: Omit<WidgetMeeting, "id" | "synced_at">): void {
+    this.db.prepare(`
+      INSERT INTO widget_meetings (invitee_uri, event_uri, installation_id, session_id, invitee_email, invitee_name, event_name,
+        booked_at, start_time, end_time, event_status, no_show, synced_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
+      ON CONFLICT(invitee_uri) DO UPDATE SET
+        start_time = excluded.start_time,
+        end_time = excluded.end_time,
+        event_status = excluded.event_status,
+        no_show = excluded.no_show,
+        synced_at = unixepoch()
+    `).run(m.invitee_uri, m.event_uri, m.installation_id, m.session_id, m.invitee_email, m.invitee_name, m.event_name,
+      m.booked_at, m.start_time, m.end_time, m.event_status, m.no_show);
+  }
+
+  /** Meetings whose final state can still change: not canceled, and ended less than 14 days ago. */
+  listOpenWidgetMeetings(): WidgetMeeting[] {
+    return this.db.prepare(
+      "SELECT * FROM widget_meetings WHERE event_status = 'active' AND end_time >= unixepoch() - 14 * 86400"
+    ).all() as WidgetMeeting[];
+  }
+
+  // ─── Widget usage reports ─────────────────────────────────────────────────
+
+  setAppMeta(key: string, value: string): void {
+    this.db.prepare("INSERT INTO app_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+  }
+
+  getAppMeta(key: string): string | null {
+    const row = this.db.prepare("SELECT value FROM app_meta WHERE key = ?").get(key) as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+
+  listUsersWithWidgetReports(): User[] {
+    return this.db.prepare(
+      "SELECT * FROM users WHERE email IS NOT NULL AND email <> '' AND (report_7d = 1 OR report_30d = 1 OR report_90d = 1)"
+    ).all() as User[];
+  }
+
+  getWidgetReportSend(userId: number, periodDays: number, periodEnd: number): WidgetReportSend | undefined {
+    return this.db.prepare(
+      "SELECT * FROM widget_report_sends WHERE user_id = ? AND period_days = ? AND period_end = ?"
+    ).get(userId, periodDays, periodEnd) as WidgetReportSend | undefined;
+  }
+
+  /** Claim a (user, length, period) slot. Returns false when another run already owns it. */
+  claimWidgetReportSend(userId: number, periodDays: number, periodStart: number, periodEnd: number): boolean {
+    const info = this.db.prepare(
+      `INSERT OR IGNORE INTO widget_report_sends (user_id, period_days, period_start, period_end, status)
+       VALUES (?, ?, ?, ?, 'sending')`
+    ).run(userId, periodDays, periodStart, periodEnd);
+    return info.changes === 1;
+  }
+
+  /** Re-claim a failed slot for a retry (attempts + 1). Returns false if it is no longer failed. */
+  retryWidgetReportSend(id: number): boolean {
+    const info = this.db.prepare(
+      "UPDATE widget_report_sends SET status = 'sending', attempts = attempts + 1, error = NULL WHERE id = ? AND status = 'failed'"
+    ).run(id);
+    return info.changes === 1;
+  }
+
+  finishWidgetReportSend(id: number, ok: boolean, error: string | null): void {
+    this.db.prepare(
+      `UPDATE widget_report_sends SET status = ?, error = ?, sent_at = CASE WHEN ? THEN unixepoch() ELSE sent_at END WHERE id = ?`
+    ).run(ok ? "sent" : "failed", error, ok ? 1 : 0, id);
+  }
+
+  /** All widget records in [start, end), for every installation. Feeds the usage report. */
+  getWidgetReportRecords(start: number, end: number): {
+    installations: Array<{ id: number; name: string }>;
+    questions: WidgetQuestion[];
+    ratings: WidgetRating[];
+    events: Array<{ id: number; installation_id: number; event_type: WidgetEventType; source_url: string | null; ip_hash: string; metadata: string | null; session_id: string | null; user_email: string | null; account: string | null; created_at: number }>;
+    articleClicks: WidgetArticleClick[];
+    meetingsBooked: WidgetMeeting[];
+    meetingsInPeriod: WidgetMeeting[];
+    sessionRatings: Array<{ exchange_id: string; installation_id: number; rating: number }>;
+    sessionFollowUps: Array<{ session_id: string; created_at: number }>;
+  } {
+    const range = [start, end];
+    const between = "created_at >= ? AND created_at < ?";
+    const questions = this.db.prepare(`SELECT * FROM widget_questions WHERE ${between} ORDER BY created_at`).all(...range) as WidgetQuestion[];
+    const sessions = [...new Set(questions.map((q) => q.session_id).filter((s): s is string => !!s))];
+    // Follow-up signals for a question can land after the period ends (e.g. an email sent the next morning),
+    // so look up to 24h past the end, restricted to the sessions seen in the period.
+    let sessionFollowUps: Array<{ session_id: string; created_at: number }> = [];
+    if (sessions.length > 0) {
+      const ph = sessions.map(() => "?").join(",");
+      sessionFollowUps = this.db.prepare(`
+        SELECT session_id, created_at FROM widget_events
+          WHERE event_type = 'email_submit' AND session_id IN (${ph}) AND created_at >= ? AND created_at < ?
+        UNION ALL
+        SELECT session_id, booked_at AS created_at FROM widget_meetings
+          WHERE session_id IN (${ph}) AND booked_at >= ? AND booked_at < ?
+      `).all(...sessions, start, end + 86400, ...sessions, start, end + 86400) as Array<{ session_id: string; created_at: number }>;
+    }
+    return {
+      installations: this.db.prepare("SELECT id, name FROM widget_installations ORDER BY id").all() as Array<{ id: number; name: string }>,
+      questions,
+      ratings: this.db.prepare(`SELECT * FROM widget_ratings WHERE ${between} ORDER BY created_at`).all(...range) as WidgetRating[],
+      events: this.db.prepare(`SELECT * FROM widget_events WHERE ${between} ORDER BY created_at`).all(...range) as ReturnType<Repository["getWidgetReportRecords"]>["events"],
+      articleClicks: this.db.prepare(`SELECT * FROM widget_article_clicks WHERE ${between} ORDER BY created_at`).all(...range) as WidgetArticleClick[],
+      meetingsBooked: this.db.prepare("SELECT * FROM widget_meetings WHERE booked_at >= ? AND booked_at < ? ORDER BY booked_at").all(...range) as WidgetMeeting[],
+      meetingsInPeriod: this.db.prepare("SELECT * FROM widget_meetings WHERE start_time >= ? AND start_time < ? ORDER BY start_time").all(...range) as WidgetMeeting[],
+      // Ratings for the period's questions, even when the rating came in after the period ended
+      sessionRatings: this.db.prepare(`
+        SELECT r.exchange_id, r.installation_id, r.rating FROM widget_ratings r
+        JOIN widget_questions q ON q.installation_id = r.installation_id AND q.exchange_id = r.exchange_id
+        WHERE q.created_at >= ? AND q.created_at < ?
+      `).all(...range) as Array<{ exchange_id: string; installation_id: number; rating: number }>,
+      sessionFollowUps,
+    };
+  }
+
+  /** First recorded timestamp per widget source, for the report's "data available since" notes. */
+  getWidgetDataSince(): Record<string, number | null> {
+    const first = (sql: string) => (this.db.prepare(sql).get() as { t: number | null }).t;
+    return {
+      questions: first("SELECT MIN(created_at) t FROM widget_questions"),
+      ratings: first("SELECT MIN(created_at) t FROM widget_ratings"),
+      article_clicks: first("SELECT MIN(created_at) t FROM widget_article_clicks"),
+      kb_click: first("SELECT MIN(created_at) t FROM widget_events WHERE event_type = 'kb_click'"),
+      calendly_click: first("SELECT MIN(created_at) t FROM widget_events WHERE event_type = 'calendly_click'"),
+      email_submit: first("SELECT MIN(created_at) t FROM widget_events WHERE event_type = 'email_submit'"),
+    };
   }
 }

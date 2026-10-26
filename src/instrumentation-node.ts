@@ -1,5 +1,7 @@
 import { syncFromProductFruits } from "./lib/productFruits";
 
+export { scheduleWidgetReports } from "./lib/widget-report-scheduler";
+
 /**
  * Schedules the Product Fruits KB sync inside the server process so kb_articles stays
  * current without anyone pressing "Scrape KB".

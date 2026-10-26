@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { Repository } from "@/lib/db/repository";
 import { requireAuth } from "@/lib/auth";
+import { reportPrefsOf } from "@/lib/user-report-prefs";
 
 export async function GET(req: NextRequest) {
   const session = requireAuth(req);
@@ -26,6 +27,7 @@ export async function GET(req: NextRequest) {
       gmail_connected: !!gmailTokens,
       gmail_email: gmailTokens?.gmail_email ?? null,
       role: user.role,
+      ...reportPrefsOf(user),
     },
   });
 }

@@ -14,6 +14,20 @@ import { RefDocsPanel } from "@/components/RefDocsPanel";
 import VideoGuidesPanel from "@/components/VideoGuidesPanel";
 import { type QAItem } from "@/components/QACard";
 import { WidgetInstallationsPanel } from "@/components/WidgetInstallationsPanel";
+import TourEngine, { type TourDefinition } from "@/components/TourEngine";
+import { createEmailReportsTour } from "@/lib/tours";
+
+const REPORT_TIMEZONES = [
+  "America/Los_Angeles", "America/Denver", "America/Phoenix", "America/Chicago",
+  "America/New_York", "America/Anchorage", "Pacific/Honolulu", "America/Santo_Domingo", "UTC",
+];
+
+type ReportToggles = { report_7d: boolean; report_30d: boolean; report_90d: boolean };
+const REPORT_TOGGLES: Array<{ key: keyof ReportToggles; label: string }> = [
+  { key: "report_7d", label: "Every 7 days" },
+  { key: "report_30d", label: "Every 30 days" },
+  { key: "report_90d", label: "Every 90 days" },
+];
 
 type Tab = "dashboard" | "kb" | "pipeline" | "agent" | "glossary";
 type KBSubTab = "qa" | "articles" | "refs" | "videos";
@@ -49,7 +63,10 @@ export default function Home() {
   const [clearing, setClearing] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [showUserMgmt, setShowUserMgmt] = useState(false);
-  const [managedUsers, setManagedUsers] = useState<Array<{ id: number; username: string; display_name: string | null; role: string; created_at: number }>>([]);
+  const [managedUsers, setManagedUsers] = useState<Array<{ id: number; username: string; display_name: string | null; role: string; created_at: number; email: string | null } & ReportToggles>>([]);
+  const [editingReportsFor, setEditingReportsFor] = useState<number | null>(null);
+  const [userReportDraft, setUserReportDraft] = useState<{ email: string } & ReportToggles>({ email: "", report_7d: false, report_30d: false, report_90d: false });
+  const [userReportError, setUserReportError] = useState<string | null>(null);
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
@@ -59,6 +76,12 @@ export default function Home() {
   const [showProfileSettings, setShowProfileSettings] = useState(false);
   const [profileCalendlyUrl, setProfileCalendlyUrl] = useState("");
   const [profileDisplayName, setProfileDisplayName] = useState("");
+  const [profileEmail, setProfileEmail] = useState("");
+  const [profileTimezone, setProfileTimezone] = useState("America/Los_Angeles");
+  const [profileReports, setProfileReports] = useState<ReportToggles>({ report_7d: false, report_30d: false, report_90d: false });
+  const [previewStatus, setPreviewStatus] = useState<string | null>(null);
+  const [activeTour, setActiveTour] = useState<TourDefinition | null>(null);
+  const [toursLoaded, setToursLoaded] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [gmailConnecting, setGmailConnecting] = useState(false);
@@ -81,7 +104,7 @@ export default function Home() {
 
   // Load completed tours on mount
   useEffect(() => {
-    fetch("/api/tours").then((r) => r.json()).then((d) => setCompletedTours(d.completed ?? [])).catch(() => {});
+    fetch("/api/tours").then((r) => r.json()).then((d) => { setCompletedTours(d.completed ?? []); setToursLoaded(true); }).catch(() => {});
   }, []);
 
   // Auto-show "What's new" modal for users who haven't seen it
@@ -90,6 +113,33 @@ export default function Home() {
     const t = setTimeout(() => setShowWhatsNew(true), 1500);
     return () => clearTimeout(t);
   }, [user, completedTours]);
+
+  const openProfileSettings = useCallback((u: AuthUser) => {
+    setProfileCalendlyUrl(u.calendly_url || "");
+    setProfileDisplayName(u.display_name || "");
+    setProfileEmail(u.email || "");
+    setProfileTimezone(u.timezone || "America/Los_Angeles");
+    setProfileReports({ report_7d: !!u.report_7d, report_30d: !!u.report_30d, report_90d: !!u.report_90d });
+    setProfileError(null);
+    setPreviewStatus(null);
+    setShowProfileSettings(true);
+  }, []);
+
+  // Email reports tour (DIS-234): once per user, after the "What's new" modal was seen
+  useEffect(() => {
+    if (!user || !toursLoaded || activeTour || showWhatsNew) return;
+    if (!completedTours.includes("whats-new-v2") || completedTours.includes("email-reports-v1")) return;
+    const t = setTimeout(() => setActiveTour(createEmailReportsTour({ openProfile: () => openProfileSettings(user) })), 1500);
+    return () => clearTimeout(t);
+  }, [user, toursLoaded, completedTours, activeTour, showWhatsNew, openProfileSettings]);
+
+  const finishTour = () => {
+    if (!activeTour) return;
+    const key = activeTour.key;
+    fetch("/api/tours", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tourKey: key }) });
+    setCompletedTours((prev) => [...prev, key]);
+    setActiveTour(null);
+  };
 
   // Fetch current user
   useEffect(() => {
@@ -117,6 +167,9 @@ export default function Home() {
         body: JSON.stringify({
           calendly_url: profileCalendlyUrl.trim() || null,
           display_name: profileDisplayName.trim() || null,
+          email: profileEmail.trim() || null,
+          timezone: profileTimezone,
+          ...profileReports,
         }),
       });
       if (!res.ok) {
@@ -177,6 +230,43 @@ export default function Home() {
     });
     setNewUsername(""); setNewPassword(""); setNewDisplayName("");
     loadUsers();
+  };
+
+  const startEditingReports = (u: (typeof managedUsers)[number]) => {
+    setEditingReportsFor(u.id);
+    setUserReportDraft({ email: u.email ?? "", report_7d: u.report_7d, report_30d: u.report_30d, report_90d: u.report_90d });
+    setUserReportError(null);
+  };
+
+  const saveUserReports = async (id: number) => {
+    setUserReportError(null);
+    const res = await fetch(`/api/auth/users/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...userReportDraft, email: userReportDraft.email.trim() || null }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setUserReportError(data.error || "Failed to save");
+      return;
+    }
+    setEditingReportsFor(null);
+    loadUsers();
+  };
+
+  const sendReportPreview = async (days: number) => {
+    setPreviewStatus("Sending…");
+    try {
+      const res = await fetch("/api/widget-reports/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ days, syncMeetings: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      setPreviewStatus(res.ok ? `Sent the ${days}-day preview to ${data.to}` : data.error || "Failed to send");
+    } catch {
+      setPreviewStatus("Network error");
+    }
   };
 
   const deleteUser = async (id: number) => {
@@ -292,10 +382,7 @@ export default function Home() {
                         <button
                           onClick={() => {
                             setShowAdminDropdown(false);
-                            setProfileCalendlyUrl(user.calendly_url || "");
-                            setProfileDisplayName(user.display_name || "");
-                            setProfileError(null);
-                            setShowProfileSettings(true);
+                            openProfileSettings(user);
                           }}
                           className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 transition-colors"
                         >
@@ -576,15 +663,47 @@ export default function Home() {
 
             <div className="space-y-1">
               {managedUsers.map((u) => (
-                <div key={u.id} className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-slate-50">
+                <div key={u.id}>
+                <div className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-slate-50">
                   <div>
                     <span className="text-sm font-medium text-slate-700">{u.display_name || u.username}</span>
                     {u.display_name && <span className="text-xs text-slate-400 ml-1.5">@{u.username}</span>}
                     {u.role === "master" && <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-mint-100 text-mint-600 text-[10px] font-medium">admin</span>}
                   </div>
-                  {u.id !== user?.id && (
-                    <button onClick={() => deleteUser(u.id)} className="text-xs text-red-500 hover:text-red-700"><Trash2 size={13} /></button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => editingReportsFor === u.id ? setEditingReportsFor(null) : startEditingReports(u)}
+                      title="Widget usage reports"
+                      className={`flex items-center gap-1 text-[10px] ${u.report_7d || u.report_30d || u.report_90d ? "text-mint-600" : "text-slate-400"} hover:text-slate-700`}
+                    >
+                      <Mail size={13} />
+                      {[u.report_7d && "7d", u.report_30d && "30d", u.report_90d && "90d"].filter(Boolean).join(" ")}
+                    </button>
+                    {u.id !== user?.id && (
+                      <button onClick={() => deleteUser(u.id)} className="text-xs text-red-500 hover:text-red-700"><Trash2 size={13} /></button>
+                    )}
+                  </div>
+                </div>
+                {editingReportsFor === u.id && (
+                  <div className="mx-3 mb-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50/60 p-2.5">
+                    <input
+                      value={userReportDraft.email}
+                      onChange={(e) => setUserReportDraft((d) => ({ ...d, email: e.target.value }))}
+                      placeholder="Report email (e.g. name@company.com)"
+                      className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-mint-500"
+                    />
+                    <div className="flex gap-3">
+                      {REPORT_TOGGLES.map((t) => (
+                        <label key={t.key} className="flex items-center gap-1 text-[11px] text-slate-600">
+                          <input type="checkbox" checked={userReportDraft[t.key]} onChange={(e) => setUserReportDraft((d) => ({ ...d, [t.key]: e.target.checked }))} />
+                          {t.label}
+                        </label>
+                      ))}
+                    </div>
+                    {userReportError && <p className="text-[11px] text-red-500">{userReportError}</p>}
+                    <button onClick={() => saveUserReports(u.id)} className="w-full rounded-lg bg-mint-600 px-3 py-1 text-xs font-medium text-white hover:bg-mint-700">Save reports</button>
+                  </div>
+                )}
                 </div>
               ))}
             </div>
@@ -748,8 +867,8 @@ export default function Home() {
 
       {/* Profile Settings Modal */}
       {showProfileSettings && user && (
-        <div className="fixed inset-0 glass-overlay flex items-center justify-center z-50" onClick={() => setShowProfileSettings(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 glass-overlay flex items-center justify-center z-50 p-4" onClick={() => setShowProfileSettings(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold text-slate-900">My Profile</h2>
               <button onClick={() => setShowProfileSettings(false)} className="p-1 text-slate-400 hover:text-slate-600"><X size={18} /></button>
@@ -815,6 +934,53 @@ export default function Home() {
                     <><Mail size={14} />Connect Gmail</>
                   )}
                 </button>
+              )}
+            </div>
+
+            {/* Widget usage reports (DIS-234) */}
+            <div data-tour="profile-email-reports">
+              <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide flex items-center gap-1.5">
+                <ClipboardList size={12} />Email Reports
+              </label>
+              <p className="text-[11px] text-slate-400 mt-0.5 mb-1.5">
+                Help widget usage (meetings, KB visits, emails, ratings, questions) for all installations, with a CSV of every record.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  value={profileEmail}
+                  onChange={(e) => setProfileEmail(e.target.value)}
+                  placeholder="Send reports to (email)"
+                  className="col-span-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-mint-400"
+                />
+                <select
+                  value={profileTimezone}
+                  onChange={(e) => setProfileTimezone(e.target.value)}
+                  className="col-span-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-mint-400"
+                >
+                  {(REPORT_TIMEZONES.includes(profileTimezone) ? REPORT_TIMEZONES : [profileTimezone, ...REPORT_TIMEZONES]).map((tz) => (
+                    <option key={tz} value={tz}>{tz.replace(/_/g, " ")}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex gap-3 mt-2">
+                {REPORT_TOGGLES.map((t) => (
+                  <label key={t.key} className="flex items-center gap-1.5 text-xs text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={profileReports[t.key]}
+                      onChange={(e) => setProfileReports((r) => ({ ...r, [t.key]: e.target.checked }))}
+                    />
+                    {t.label}
+                  </label>
+                ))}
+              </div>
+              {user.role === "master" && (
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+                  <span className="text-slate-400">Preview (last 7 days):</span>
+                  <a href="/api/widget-reports/preview?days=7" target="_blank" rel="noopener noreferrer" className="text-mint-600 hover:underline">Open</a>
+                  <button onClick={() => sendReportPreview(7)} disabled={!user.email} className="text-mint-600 hover:underline disabled:text-slate-300 disabled:no-underline">Email me</button>
+                  {previewStatus && <span className="text-slate-500">{previewStatus}</span>}
+                </div>
               )}
             </div>
 
@@ -921,6 +1087,8 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {activeTour && <TourEngine tour={activeTour} onComplete={finishTour} onSkip={finishTour} />}
     </div>
   );
 }

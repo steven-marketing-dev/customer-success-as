@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { NextRequest } from "next/server";
 import { Repository } from "@/lib/db/repository";
-import { getDb, type WidgetInstallation } from "@/lib/db/index";
+import { getDb, type WidgetInstallation, type WidgetVisitorContext } from "@/lib/db/index";
 
 export interface ResolvedInstallation {
   installation: WidgetInstallation;
@@ -142,4 +142,21 @@ export function buildFrameAncestorsValue(allowedOrigins: string[]): string {
 
 export function getAllowedOrigins(installation: WidgetInstallation): string[] {
   return parseAllowedOrigins(installation.allowed_origins);
+}
+
+const SESSION_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Visitor context the iframe sends in each request body: an anonymous per-tab session id,
+ *  plus the user's email and account when the host page passes them to widget.js
+ *  (data-user-email / data-account). Anything malformed is dropped, never rejected. */
+export function readWidgetContext(body: { sessionId?: unknown; userEmail?: unknown; account?: unknown } | null | undefined): WidgetVisitorContext {
+  const sessionId = typeof body?.sessionId === "string" && SESSION_ID_RE.test(body.sessionId) ? body.sessionId : null;
+  const email = typeof body?.userEmail === "string" ? body.userEmail.trim().slice(0, 200) : "";
+  const account = typeof body?.account === "string" ? body.account.trim().slice(0, 200) : "";
+  return {
+    session_id: sessionId,
+    user_email: EMAIL_RE.test(email) ? email.toLowerCase() : null,
+    account: account || null,
+  };
 }

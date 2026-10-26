@@ -70,6 +70,30 @@ export function createVideoGuidesTour(actions: {
   };
 }
 
+/** Email reports (DIS-234): points users at the new section in My Profile. */
+export function createEmailReportsTour(actions: { openProfile: () => void }): TourDefinition {
+  return {
+    key: "email-reports-v1",
+    name: "Widget Usage Reports",
+    steps: [
+      {
+        title: "Widget usage reports by email",
+        description: "You can now get a usage report of the help widget every 7, 30 or 90 days: meetings, knowledge base visits, emails, ratings and every question asked, with a CSV of all records.",
+        target: '[data-tour="profile-email-reports"]',
+        position: "left",
+        beforeStep: actions.openProfile,
+        waitForDom: true,
+      },
+      {
+        title: "Pick your reports",
+        description: "Add the email address the reports go to, your timezone, and switch on the reports you want. Click Save. Reports are off until you turn them on.",
+        target: '[data-tour="profile-email-reports"]',
+        position: "left",
+      },
+    ],
+  };
+}
+
 /** Registry of all available tours */
-export const TOUR_KEYS = ["video-guides-v1"] as const;
+export const TOUR_KEYS = ["video-guides-v1", "email-reports-v1"] as const;
 export type TourKey = (typeof TOUR_KEYS)[number];

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { Repository } from "@/lib/db/repository";
 import { getDb } from "@/lib/db/index";
-import { corsHeaders, resolveInstallation, extractClientIp, hashIp } from "@/lib/widget-auth";
+import { corsHeaders, resolveInstallation, extractClientIp, hashIp, readWidgetContext } from "@/lib/widget-auth";
 
 export async function OPTIONS(req: NextRequest) {
   return new Response(null, { status: 204, headers: corsHeaders(req.headers.get("origin")) });
@@ -19,6 +19,9 @@ export async function POST(req: NextRequest) {
     feedback?: string | null;
     question?: string;
     answer?: string;
+    sessionId?: string;
+    userEmail?: string;
+    account?: string;
   };
   try { body = await req.json(); }
   catch {
@@ -54,7 +57,7 @@ export async function POST(req: NextRequest) {
     question,
     answer,
     ip_hash: ipHashValue,
-  });
+  }, readWidgetContext(body));
 
   return new Response(JSON.stringify({ ok: true }), {
     headers: { "Content-Type": "application/json", ...cors },
