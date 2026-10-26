@@ -108,6 +108,11 @@ export interface AuthUser {
   gmail_connected: boolean;
   gmail_email: string | null;
   role: "master" | "user";
+  email?: string | null;
+  timezone?: string | null;
+  report_7d?: boolean;
+  report_30d?: boolean;
+  report_90d?: boolean;
 }
 
 export interface AgentPanelHandle {

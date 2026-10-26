@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { Repository } from "@/lib/db/repository";
 import { requireAuth } from "@/lib/auth";
 import { hashSync } from "bcryptjs";
+import { reportPrefsOf } from "@/lib/user-report-prefs";
 
 export async function GET(req: NextRequest) {
   const session = requireAuth(req);
@@ -19,6 +20,7 @@ export async function GET(req: NextRequest) {
       display_name: u.display_name,
       role: u.role,
       created_at: u.created_at,
+      ...reportPrefsOf(u),
     }))
   );
 }

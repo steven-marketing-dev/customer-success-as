@@ -20,3 +20,20 @@ export function sanitizeCalendlyLinks(text: string, configuredUrl: string | null
     .replace(calendlyRe, "")
     .replace(/[ \t]{2,}/g, " ");
 }
+
+/** Tag a scheduling link so a booking made from the widget can be found later through the
+ *  Calendly API (Calendly stores utm_* on the invitee's `tracking`). Used both client-side
+ *  (menu button) and server-side (links inside chat answers). */
+export const WIDGET_UTM_SOURCE = "cs-widget";
+
+export function withWidgetUtm(url: string, installationId: number, sessionId: string | null): string {
+  try {
+    const u = new URL(url);
+    u.searchParams.set("utm_source", WIDGET_UTM_SOURCE);
+    u.searchParams.set("utm_medium", `installation-${installationId}`);
+    if (sessionId) u.searchParams.set("utm_content", sessionId);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}

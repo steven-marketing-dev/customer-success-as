@@ -165,6 +165,11 @@ export interface User {
   calendly_url: string | null;
   role: "master" | "user";
   created_at: number;
+  email: string | null;
+  timezone: string | null;
+  report_7d: number; // 0 | 1
+  report_30d: number; // 0 | 1
+  report_90d: number; // 0 | 1
 }
 
 export interface GmailToken {
@@ -254,6 +259,9 @@ export interface WidgetRating {
   question: string;
   answer: string;
   ip_hash: string;
+  session_id: string | null;
+  user_email: string | null;
+  account: string | null;
   created_at: number;
 }
 
@@ -273,6 +281,9 @@ export interface WidgetEvent {
   source_url: string | null;
   ip_hash: string;
   metadata: string | null; // JSON
+  session_id: string | null;
+  user_email: string | null;
+  account: string | null;
   created_at: number;
 }
 
@@ -285,6 +296,10 @@ export interface WidgetQuestion {
   answer: string;
   articles_json: string; // JSON array of {id,title,url}
   ip_hash: string;
+  session_id: string | null;
+  user_email: string | null;
+  account: string | null;
+  status: "ok" | "error";
   created_at: number;
 }
 
@@ -296,6 +311,48 @@ export interface WidgetArticleClick {
   article_title: string;
   article_url: string;
   ip_hash: string;
+  session_id: string | null;
+  user_email: string | null;
+  account: string | null;
+  created_at: number;
+}
+
+/** Anonymous widget visitor context sent by the iframe with every call. */
+export interface WidgetVisitorContext {
+  session_id: string | null;
+  user_email: string | null;
+  account: string | null;
+}
+
+export type WidgetMeetingStatus = "scheduled" | "held" | "canceled" | "no_show";
+
+export interface WidgetMeeting {
+  id: number;
+  invitee_uri: string;
+  event_uri: string;
+  installation_id: number | null;
+  session_id: string | null;
+  invitee_email: string | null;
+  invitee_name: string | null;
+  event_name: string | null;
+  booked_at: number;
+  start_time: number;
+  end_time: number;
+  event_status: "active" | "canceled";
+  no_show: number; // 0 | 1
+  synced_at: number;
+}
+
+export interface WidgetReportSend {
+  id: number;
+  user_id: number;
+  period_days: number;
+  period_start: number;
+  period_end: number;
+  status: "sending" | "sent" | "failed";
+  attempts: number;
+  error: string | null;
+  sent_at: number | null;
   created_at: number;
 }
 
@@ -619,6 +676,52 @@ function initDb(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_widget_article_clicks_install_created ON widget_article_clicks(installation_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_widget_article_clicks_install_url ON widget_article_clicks(installation_id, article_url);
 
+    CREATE TABLE IF NOT EXISTS widget_meetings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      invitee_uri TEXT UNIQUE NOT NULL,
+      event_uri TEXT NOT NULL,
+      installation_id INTEGER REFERENCES widget_installations(id) ON DELETE SET NULL,
+      session_id TEXT,
+      invitee_email TEXT,
+      invitee_name TEXT,
+      event_name TEXT,
+      booked_at INTEGER NOT NULL,
+      start_time INTEGER NOT NULL,
+      end_time INTEGER NOT NULL,
+      event_status TEXT NOT NULL DEFAULT 'active',
+      no_show INTEGER NOT NULL DEFAULT 0,
+      synced_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_widget_meetings_booked ON widget_meetings(booked_at);
+    CREATE INDEX IF NOT EXISTS idx_widget_meetings_start ON widget_meetings(start_time);
+
+    -- Calendly events already inspected, so each event's invitees are fetched once
+    CREATE TABLE IF NOT EXISTS calendly_events_seen (
+      event_uri TEXT PRIMARY KEY,
+      start_time INTEGER NOT NULL,
+      checked_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- One row per (user, report length, period): the UNIQUE key makes sending idempotent
+    CREATE TABLE IF NOT EXISTS widget_report_sends (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      period_days INTEGER NOT NULL,
+      period_start INTEGER NOT NULL,
+      period_end INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'sending',
+      attempts INTEGER NOT NULL DEFAULT 1,
+      error TEXT,
+      sent_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(user_id, period_days, period_end)
+    );
+
+    CREATE TABLE IF NOT EXISTS app_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS gmail_tokens (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -674,10 +777,32 @@ function initDb(db: Database.Database) {
     "ALTER TABLE qa_pairs ADD COLUMN root_cause TEXT",
     "ALTER TABLE kb_articles ADD COLUMN source_id INTEGER",
     "ALTER TABLE kb_articles ADD COLUMN source_modified_at TEXT",
+    "ALTER TABLE users ADD COLUMN email TEXT",
+    "ALTER TABLE users ADD COLUMN timezone TEXT",
+    "ALTER TABLE users ADD COLUMN report_7d INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN report_30d INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN report_90d INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE widget_questions ADD COLUMN status TEXT NOT NULL DEFAULT 'ok'",
+    ...["widget_questions", "widget_ratings", "widget_events", "widget_article_clicks"].flatMap((t) => [
+      `ALTER TABLE ${t} ADD COLUMN session_id TEXT`,
+      `ALTER TABLE ${t} ADD COLUMN user_email TEXT`,
+      `ALTER TABLE ${t} ADD COLUMN account TEXT`,
+    ]),
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }
   }
+
+  for (const t of ["widget_questions", "widget_ratings", "widget_events", "widget_article_clicks"]) {
+    try { db.exec(`CREATE INDEX IF NOT EXISTS idx_${t}_session ON ${t}(session_id)`); } catch { /* exists */ }
+  }
+
+  // Date from which session/identity/subject/meeting tracking exists (DIS-234). Set once,
+  // on the first boot with this schema; reports label older data "Not available".
+  try {
+    db.prepare("INSERT OR IGNORE INTO app_meta (key, value) VALUES ('widget_tracking_v2_since', ?)")
+      .run(String(Math.floor(Date.now() / 1000)));
+  } catch { /* table may not exist yet */ }
 
   // Unique index on source_id (NULLs allowed for legacy rows pending backfill).
   try {

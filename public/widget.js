@@ -9,6 +9,8 @@
  *   data-auto-launcher="true"  — render a floating bubble if the host has no button
  *   data-host="https://YOUR-HOST" — override the host origin (defaults to the script's own origin)
  *   data-position="right|left" — which side the panel anchors to (default right)
+ *   data-user-email="jane@example.com" — signed-in user's email, shown in usage reports
+ *   data-account="Acme Staffing" — signed-in user's account/company, shown in usage reports
  */
 (function () {
   "use strict";
@@ -41,6 +43,10 @@
   }
 
   var iframeSrc = host + "/embed/chat?key=" + encodeURIComponent(widgetKey);
+  var userEmail = currentScript.getAttribute("data-user-email");
+  var account = currentScript.getAttribute("data-account");
+  if (userEmail) iframeSrc += "&ue=" + encodeURIComponent(userEmail);
+  if (account) iframeSrc += "&acct=" + encodeURIComponent(account);
 
   var isOpen = false;
   var container = null;

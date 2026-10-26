@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
   }
 
   return new Response(JSON.stringify({
+    installationId: installation.id,
     productName: installation.product_name,
     primaryColor: installation.primary_color,
     calendlyUrl: installation.calendly_url,

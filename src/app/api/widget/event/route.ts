@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { Repository } from "@/lib/db/repository";
 import { getDb, type WidgetEventType } from "@/lib/db/index";
-import { corsHeaders, resolveInstallation, extractClientIp, hashIp } from "@/lib/widget-auth";
+import { corsHeaders, resolveInstallation, extractClientIp, hashIp, readWidgetContext } from "@/lib/widget-auth";
 
 const ALLOWED_TYPES = new Set<WidgetEventType>(["kb_click", "calendly_click", "email_submit"]);
 // Client-emitted events: only the two click-throughs. email_submit is recorded
@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
   const { installation, matchedOrigin } = resolution;
   const cors = corsHeaders(matchedOrigin);
 
-  let body: { type?: string; sourceUrl?: string };
+  let body: { type?: string; sourceUrl?: string; sessionId?: string; userEmail?: string; account?: string };
   try {
     // sendBeacon sends a Blob with whatever MIME we picked — parse as JSON either way
     const text = await req.text();
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
       source_url: sourceUrl,
       ip_hash: ipHash,
       metadata: null,
-    });
+    }, readWidgetContext(body));
   } catch (e) {
     console.warn("[widget/event] record failed:", e);
   }

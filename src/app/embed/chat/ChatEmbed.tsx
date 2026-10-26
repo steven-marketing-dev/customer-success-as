@@ -7,6 +7,7 @@ import {
   ChevronLeft, ChevronRight, Check,
 } from "lucide-react";
 import { renderMarkdown } from "@/lib/markdown-inline";
+import { withWidgetUtm } from "@/lib/calendly";
 
 interface ArticleRef {
   id: number;
@@ -26,6 +27,7 @@ interface Message {
 }
 
 interface WidgetConfig {
+  installationId: number;
   productName: string | null;
   primaryColor: string | null;
   calendlyUrl: string | null;
@@ -40,16 +42,43 @@ type View = "menu" | "chat" | "email";
 
 const DEFAULT_COLOR = "#0d9488";
 
+/** Sent with every widget call so the server can join a visitor's question, rating, email
+ *  and booking (DIS-234). userEmail/account come from the host page via widget.js. */
+interface VisitorContext {
+  sessionId: string;
+  userEmail: string | null;
+  account: string | null;
+}
+
+function newSessionId(): string {
+  try { return crypto.randomUUID(); } catch { /* insecure context */ }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+/** One anonymous session per browser tab and widget key (sessionStorage, like the chat history). */
+function getSessionId(widgetKey: string): string {
+  const storageKey = `cs-widget-session-${widgetKey}`;
+  try {
+    const existing = sessionStorage.getItem(storageKey);
+    if (existing) return existing;
+    const id = newSessionId();
+    sessionStorage.setItem(storageKey, id);
+    return id;
+  } catch {
+    return newSessionId();
+  }
+}
+
 function postToParent(payload: Record<string, unknown>) {
   try { window.parent?.postMessage({ source: "cs-widget", ...payload }, "*"); } catch { /* */ }
 }
 
 /** Best-effort fire-and-forget event tracker. Uses sendBeacon so the request survives
  *  the navigation away (e.g. clicking KB → opens new tab → page may unload). */
-function trackEvent(widgetKey: string, type: "kb_click" | "calendly_click", sourceUrl: string | null) {
+function trackEvent(widgetKey: string, type: "kb_click" | "calendly_click", sourceUrl: string | null, visitor: VisitorContext) {
   if (!widgetKey) return;
   const url = `/api/widget/event?key=${encodeURIComponent(widgetKey)}`;
-  const body = JSON.stringify({ type, sourceUrl });
+  const body = JSON.stringify({ type, sourceUrl, ...visitor });
   try {
     if (typeof navigator !== "undefined" && navigator.sendBeacon) {
       const blob = new Blob([body], { type: "application/json" });
@@ -76,7 +105,7 @@ function getHostPageUrl(): string {
   return document.referrer || "";
 }
 
-function reportArticleClick(widgetKey: string, questionId: number | null, article: ArticleRef): void {
+function reportArticleClick(widgetKey: string, questionId: number | null, article: ArticleRef, visitor: VisitorContext): void {
   if (!widgetKey) return;
   const url = `/api/widget/article-click?key=${encodeURIComponent(widgetKey)}`;
   const body = JSON.stringify({
@@ -84,6 +113,7 @@ function reportArticleClick(widgetKey: string, questionId: number | null, articl
     articleId: article.id,
     title: article.title,
     url: article.url,
+    ...visitor,
   });
   try {
     if (typeof navigator !== "undefined" && navigator.sendBeacon) {
@@ -105,6 +135,13 @@ function reportArticleClick(widgetKey: string, questionId: number | null, articl
 export function ChatEmbed() {
   const searchParams = useSearchParams();
   const widgetKey = searchParams.get("key") ?? "";
+  const userEmailParam = searchParams.get("ue");
+  const accountParam = searchParams.get("acct");
+  const visitor = useMemo<VisitorContext>(() => ({
+    sessionId: typeof window === "undefined" ? "" : getSessionId(widgetKey),
+    userEmail: userEmailParam || null,
+    account: accountParam || null,
+  }), [widgetKey, userEmailParam, accountParam]);
 
   const [config, setConfig] = useState<WidgetConfig | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -168,20 +205,20 @@ export function ChatEmbed() {
         {view === "menu" && (
           <MenuView config={config} color={color} onPick={(v) => {
             if (v === "calendly" && config.calendlyUrl) {
-              trackEvent(widgetKey, "calendly_click", getHostPageUrl());
-              window.open(config.calendlyUrl, "_blank", "noopener,noreferrer");
+              trackEvent(widgetKey, "calendly_click", getHostPageUrl(), visitor);
+              window.open(withWidgetUtm(config.calendlyUrl, config.installationId, visitor.sessionId), "_blank", "noopener,noreferrer");
               return;
             }
             if (v === "knowledge_base" && config.knowledgeBaseUrl) {
-              trackEvent(widgetKey, "kb_click", getHostPageUrl());
+              trackEvent(widgetKey, "kb_click", getHostPageUrl(), visitor);
               window.open(config.knowledgeBaseUrl, "_blank", "noopener,noreferrer");
               return;
             }
             setView(v as View);
           }} />
         )}
-        {view === "chat" && <ChatView widgetKey={widgetKey} color={color} productName={productName} />}
-        {view === "email" && <EmailView widgetKey={widgetKey} color={color} onSent={() => setView("menu")} />}
+        {view === "chat" && <ChatView widgetKey={widgetKey} color={color} productName={productName} visitor={visitor} />}
+        {view === "email" && <EmailView widgetKey={widgetKey} color={color} visitor={visitor} onSent={() => setView("menu")} />}
       </div>
     </div>
   );
@@ -304,8 +341,8 @@ function MenuRow({ color, icon, title, subtitle, onClick, external }: {
 
 // ─── Chat View ──────────────────────────────────────────────────────────────
 
-function ChatView({ widgetKey, color, productName }: {
-  widgetKey: string; color: string; productName: string;
+function ChatView({ widgetKey, color, productName, visitor }: {
+  widgetKey: string; color: string; productName: string; visitor: VisitorContext;
 }) {
   const storageKey = useMemo(() => `cs-widget-history-${widgetKey}`, [widgetKey]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -409,7 +446,7 @@ function ChatView({ widgetKey, color, productName }: {
       const res = await fetch(`/api/widget/chat?key=${encodeURIComponent(widgetKey)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, history }),
+        body: JSON.stringify({ question, history, ...visitor }),
       });
 
       if (!res.ok || !res.body) {
@@ -504,6 +541,7 @@ function ChatView({ widgetKey, color, productName }: {
                 msg={msg}
                 color={color}
                 widgetKey={widgetKey}
+                visitor={visitor}
                 userQuestion={msg.role === "assistant" ? (messages[i - 1]?.content ?? "") : ""}
               />
             </div>
@@ -553,7 +591,7 @@ function ChatView({ widgetKey, color, productName }: {
   );
 }
 
-function MessageBubble({ msg, color, widgetKey, userQuestion }: { msg: Message; color: string; widgetKey: string; userQuestion: string }) {
+function MessageBubble({ msg, color, widgetKey, visitor, userQuestion }: { msg: Message; color: string; widgetKey: string; visitor: VisitorContext; userQuestion: string }) {
   if (msg.role === "user") {
     return (
       <div className="flex justify-end">
@@ -590,7 +628,7 @@ function MessageBubble({ msg, color, widgetKey, userQuestion }: { msg: Message; 
                 href={a.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                onClick={() => reportArticleClick(widgetKey, msg.questionId ?? null, a)}
+                onClick={() => reportArticleClick(widgetKey, msg.questionId ?? null, a, visitor)}
                 className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 transition-colors text-slate-700"
               >
                 <ExternalLink size={11} className="flex-shrink-0 text-slate-400" />
@@ -603,6 +641,7 @@ function MessageBubble({ msg, color, widgetKey, userQuestion }: { msg: Message; 
         {!msg.streaming && msg.exchangeId && (
           <RatingBar
             widgetKey={widgetKey}
+            visitor={visitor}
             exchangeId={msg.exchangeId}
             question={userQuestion}
             answer={msg.content}
@@ -614,32 +653,45 @@ function MessageBubble({ msg, color, widgetKey, userQuestion }: { msg: Message; 
   );
 }
 
-function RatingBar({ widgetKey, exchangeId, question, answer, initial }: {
-  widgetKey: string; exchangeId: string; question: string; answer: string; initial: number | null;
+function RatingBar({ widgetKey, visitor, exchangeId, question, answer, initial }: {
+  widgetKey: string; visitor: VisitorContext; exchangeId: string; question: string; answer: string; initial: number | null;
 }) {
   const [rating, setRating] = useState<number | null>(initial);
   const [hovered, setHovered] = useState<number | null>(null);
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(false);
 
-  const post = async (value: number, fb: string | null) => {
+  const post = async (value: number, fb: string | null): Promise<boolean> => {
     setSaving(true);
+    setSaveError(false);
+    let ok = false;
     try {
-      await fetch(`/api/widget/rate?key=${encodeURIComponent(widgetKey)}`, {
+      const res = await fetch(`/api/widget/rate?key=${encodeURIComponent(widgetKey)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ exchangeId, rating: value, feedback: fb, question, answer }),
+        body: JSON.stringify({ exchangeId, rating: value, feedback: fb, question, answer, ...visitor }),
       });
-      setRating(value);
-      setShowFeedback(false);
-    } catch { /* */ }
+      ok = res.ok;
+    } catch { /* network error */ }
     setSaving(false);
+    if (!ok) setSaveError(true);
+    return ok;
   };
 
-  const handleClick = (v: number) => {
-    if (v === 1) { setRating(v); setShowFeedback(true); }
-    else post(v, null);
+  // The score is saved on click; a 1-star then asks for feedback, saved as a second call.
+  // Before, a 1-star was only saved once the visitor submitted or skipped the feedback.
+  const handleClick = async (v: number) => {
+    const previous = rating;
+    setRating(v);
+    if (!(await post(v, null))) { setRating(previous); return; }
+    setShowFeedback(v === 1);
+  };
+
+  const submitFeedback = async () => {
+    if (feedback.trim() && !(await post(1, feedback.trim()))) return;
+    setShowFeedback(false);
   };
 
   const colors = ["", "text-red-400", "text-amber-400", "text-emerald-400"];
@@ -680,25 +732,26 @@ function RatingBar({ widgetKey, exchangeId, question, answer, initial }: {
             className="w-full rounded-lg border border-red-200 bg-red-50/30 px-2.5 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-red-300"
           />
           <div className="flex gap-1.5">
-            <button onClick={() => post(1, feedback || null)} disabled={saving} className="rounded-md bg-red-500 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-red-600 disabled:opacity-50">
+            <button onClick={submitFeedback} disabled={saving} className="rounded-md bg-red-500 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-red-600 disabled:opacity-50">
               Submit
             </button>
-            <button onClick={() => { setShowFeedback(false); post(1, null); }} className="rounded-md px-2.5 py-1 text-[11px] text-slate-500 hover:bg-slate-100">
+            <button onClick={() => setShowFeedback(false)} className="rounded-md px-2.5 py-1 text-[11px] text-slate-500 hover:bg-slate-100">
               Skip
             </button>
           </div>
         </div>
       )}
+      {saveError && <p className="mt-1 text-[10px] text-red-500">Couldn&apos;t save your rating. Please try again.</p>}
     </div>
   );
 }
 
 // ─── Email View ─────────────────────────────────────────────────────────────
 
-function EmailView({ widgetKey, color, onSent }: { widgetKey: string; color: string; onSent: () => void }) {
+function EmailView({ widgetKey, color, visitor, onSent }: { widgetKey: string; color: string; visitor: VisitorContext; onSent: () => void }) {
   const [subject, setSubject] = useState("");
   const [description, setDescription] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(visitor.userEmail ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -718,7 +771,7 @@ function EmailView({ widgetKey, color, onSent }: { widgetKey: string; color: str
       const res = await fetch(`/api/widget/ticket?key=${encodeURIComponent(widgetKey)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject: subject.trim(), description: description.trim(), email: email.trim(), sourceUrl }),
+        body: JSON.stringify({ subject: subject.trim(), description: description.trim(), email: email.trim(), sourceUrl, ...visitor }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({} as { error?: string }));

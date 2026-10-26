@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { Repository } from "@/lib/db/repository";
 import { getDb } from "@/lib/db/index";
-import { corsHeaders, resolveInstallation, extractClientIp, hashIp } from "@/lib/widget-auth";
+import { corsHeaders, resolveInstallation, extractClientIp, hashIp, readWidgetContext } from "@/lib/widget-auth";
 
 export async function OPTIONS(req: NextRequest) {
   return new Response(null, { status: 204, headers: corsHeaders(req.headers.get("origin")) });
@@ -28,6 +28,9 @@ export async function POST(req: NextRequest) {
     articleId?: number | string | null;
     title?: string;
     url?: string;
+    sessionId?: string;
+    userEmail?: string;
+    account?: string;
   };
   try { body = raw ? JSON.parse(raw) : {}; }
   catch {
@@ -56,7 +59,7 @@ export async function POST(req: NextRequest) {
       article_title: title,
       article_url: url,
       ip_hash: ipHash,
-    });
+    }, readWidgetContext(body));
   } catch { /* best-effort */ }
 
   return new Response(JSON.stringify({ ok: true }), {
