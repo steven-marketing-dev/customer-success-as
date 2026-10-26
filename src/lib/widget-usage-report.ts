@@ -92,6 +92,26 @@ export function trailingPeriod(days: number, tz: string, nowMs = Date.now()): Re
   return { days, start: localMidnight(addDays(today, -days), tz), end: localMidnight(today, tz), timezone: tz };
 }
 
+/** Columns for the "by day" tables: one per day for 7-day reports, per week for 30, per 15 days for 90. */
+interface Bucket { start: number; end: number; label: string }
+
+function periodBuckets(period: ReportPeriod): { unit: string; buckets: Bucket[] } {
+  const { start, end, days, timezone: tz } = period;
+  const size = days <= 7 ? 1 : days <= 31 ? 7 : 15;
+  const first = localDateOf(start * 1000, tz);
+  const md = (t: number) => new Date(t * 1000).toLocaleDateString("en-US", { timeZone: tz, month: "short", day: "numeric" });
+  const buckets: Bucket[] = [];
+  for (let i = 0; i < days; i += size) {
+    const bStart = localMidnight(addDays(first, i), tz);
+    const bEnd = Math.min(localMidnight(addDays(first, Math.min(i + size, days)), tz), end);
+    const label = size === 1
+      ? new Date(bStart * 1000).toLocaleDateString("en-US", { timeZone: tz, weekday: "short", day: "numeric" }).replace(/^(\d+)\s+(\w+)$/, "$2 $1")
+      : `${md(bStart)} – ${md(bEnd - 60)}`;
+    buckets.push({ start: bStart, end: bEnd, label });
+  }
+  return { unit: size === 1 ? "day" : size === 7 ? "week" : "15 days", buckets };
+}
+
 // ─── Formatting ─────────────────────────────────────────────────────────────
 
 function fmtDateTime(ts: number, tz: string): string {
@@ -276,6 +296,23 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod): 
       td(String(n(emails)), { right: true }), td(String(n(r.ratings)), { right: true }), td(String(n(questions)), { right: true })];
   });
 
+  // "By day" tables (one column per day / week / 15 days, depending on the report length)
+  const { unit, buckets } = periodBuckets(period);
+  const perBucket = (times: number[]) => buckets.map((b) => times.filter((t) => t >= b.start && t < b.end).length);
+  const byDayTable = (rows: Array<[string, Array<number | string>]>) =>
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;border-collapse:collapse">
+      <tr style="background:#f1f5f9">${th("")}${buckets.map((b) => th(esc(b.label))).join("")}</tr>
+      ${rows.map(([name, vals]) => `<tr>${td(`<span style="color:#475569">${name}</span>`)}${vals.map((v) => td(String(v))).join("")}</tr>`).join("")}
+    </table>`;
+  const byUnitTitle = unit === "15 days" ? "per 15 days" : `by ${unit}`;
+  const questionsByDay = byDayTable([["Questions", perBucket(questions.map((q) => q.created_at))]]);
+  const notAvail = buckets.map(() => "—");
+  const meetingsByDay = byDayTable([
+    ["Booked", meetingsAvailable ? perBucket(r.meetingsBooked.map((m) => m.booked_at)) : notAvail],
+    ["Held", meetingsAvailable ? perBucket(r.meetingsInPeriod.filter((m) => meetingStatus(m, now) === "held").map((m) => m.start_time)) : notAvail],
+    ["Scheduling link clicks", perBucket(r.events.filter((e) => e.event_type === "calendly_click").map((e) => e.created_at))],
+  ]);
+
   const meetingsBody = !meetingsAvailable
     ? empty(calendlyOn ? `Not available before ${esc(v2Label)}.` : "Not available — Calendly is not connected yet.")
     : meetings.length === 0 ? empty("No meetings booked through the widget in this period.")
@@ -331,6 +368,8 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod): 
 </td></tr>
 ${section("Summary", table(["Metric", "Value", "Note"], summaryRows, [1]))}
 ${r.installations.length > 1 ? section("By installation", table(["Installation", "Meetings", "KB visits", "Emails", "Ratings", "Questions"], perInstall, [1, 2, 3, 4, 5])) : ""}
+${section(`Questions ${byUnitTitle}`, questionsByDay)}
+${section(`Meetings ${byUnitTitle}`, meetingsByDay)}
 ${section("Meetings", meetingsBody)}
 ${section("Questions needing follow-up", questionsBody)}
 ${section("Ratings", ratingsBody)}
