@@ -183,13 +183,10 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod): 
   const kbMenu = r.events.filter((e) => e.event_type === "kb_click");
   const kbUnique = new Set([...kbMenu, ...r.articleClicks].map((x) => x.user_email ?? x.ip_hash)).size;
   const kbVisits = kbMenu.length + r.articleClicks.length;
-  const articleCounts = new Map<string, { title: string; url: string; n: number }>();
-  for (const c of r.articleClicks) {
-    const cur = articleCounts.get(c.article_url) ?? { title: c.article_title, url: c.article_url, n: 0 };
-    cur.n++;
-    articleCounts.set(c.article_url, cur);
-  }
-  const topArticles = [...articleCounts.values()].sort((a, b) => b.n - a.n).slice(0, 10);
+  const kbVisitRows = [
+    ...kbMenu.map((e) => ({ created_at: e.created_at, source: "Menu", title: null as string | null, url: null as string | null, user_email: e.user_email, account: e.account })),
+    ...r.articleClicks.map((c) => ({ created_at: c.created_at, source: "Answer link", title: c.article_title, url: c.article_url, user_email: c.user_email, account: c.account })),
+  ].sort((a, b) => a.created_at - b.created_at);
 
   // Emails sent
   const emails = r.events.filter((e) => e.event_type === "email_submit").map((e) => {
@@ -301,8 +298,13 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod): 
       td(x.feedback ? `“${esc(truncate(x.feedback, 300))}”` : "—"), td(who(x.user_email, x.account)),
     ])) + more(ratingsShown.length, r.ratings.length);
 
-  const kbBody = topArticles.length === 0 ? empty("No articles opened from answers in this period.")
-    : table(["Article", "Visits"], topArticles.map((a) => [td(`<a href="${esc(a.url)}" style="color:#0d9488">${esc(a.title)}</a>`), td(String(a.n), { right: true })]), [1]);
+  const kbShown = kbVisitRows.slice(0, 25);
+  const kbBody = kbVisitRows.length === 0 ? empty("No knowledge base visits from the widget in this period.")
+    : table(["When", "From", "Article", "Account / user"], kbShown.map((v) => [
+      td(esc(fmtDateTime(v.created_at, tz))), td(v.source),
+      td(v.url ? `<a href="${esc(v.url)}" style="color:#0d9488">${esc(v.title ?? v.url)}</a>` : '<span style="color:#64748b">Knowledge base home (article not trackable)</span>'),
+      td(who(v.user_email, v.account)),
+    ])) + more(kbShown.length, kbVisitRows.length);
 
   const followUps = questions.filter((q) => q.outcome === "follow_up");
   const followShown = followUps.slice(0, 15);
@@ -333,7 +335,7 @@ ${section("Meetings", meetingsBody)}
 ${section("Questions needing follow-up", questionsBody)}
 ${section("Ratings", ratingsBody)}
 ${section("Emails sent", emailsBody)}
-${section("Articles opened from answers", kbBody)}
+${section("Knowledge base visits", kbBody)}
 <tr><td style="padding:16px 28px 24px">
   <h2 style="font-size:13px;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid #e2e8f0;padding-bottom:4px;margin:0 0 10px">Data availability</h2>
   <ul style="font-size:12px;color:#475569;margin:0;padding-left:18px">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>
