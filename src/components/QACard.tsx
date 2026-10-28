@@ -114,7 +114,8 @@ export function QACard({ qa, onUpdate }: Props) {
   const hasContent = !!(qa.answer || steps.length > 0);
   const varEntries = Object.entries(variables).filter(([, v]) => v);
 
-  const hubspotUrl = qa.hubspot_id ? getHubSpotUrl(qa.hubspot_id) : null;
+  // Q&A written from the widget gap queue have a local ticket ("widget-gap-…"), not a HubSpot one
+  const hubspotUrl = qa.hubspot_id && !qa.hubspot_id.startsWith("widget-gap-") ? getHubSpotUrl(qa.hubspot_id) : null;
 
   const startEdit = () => {
     setEditQuestion(qa.question);

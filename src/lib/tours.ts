@@ -94,6 +94,30 @@ export function createEmailReportsTour(actions: { openProfile: () => void }): To
   };
 }
 
+/** Widget gap queue (DIS-234): questions the widget agent couldn't answer, on the Dashboard. */
+export function createWidgetGapsTour(actions: { openDashboard: () => void }): TourDefinition {
+  return {
+    key: "widget-gaps-v1",
+    name: "Widget Gap Queue",
+    steps: [
+      {
+        title: "Questions the widget couldn't answer",
+        description: "When the help widget's agent has no documented answer, the question lands here, grouped and counted. The usage report email links to this list.",
+        target: '[data-tour="widget-gaps"]',
+        position: "bottom",
+        beforeStep: actions.openDashboard,
+        waitForDom: true,
+      },
+      {
+        title: "Answer it once",
+        description: "Click Answer it and write what the agent should say. It becomes a Q&A in the knowledge base and the agent uses it from the next question. Dismiss the ones that aren't real questions.",
+        target: '[data-tour="widget-gaps"]',
+        position: "bottom",
+      },
+    ],
+  };
+}
+
 /** Registry of all available tours */
-export const TOUR_KEYS = ["video-guides-v1", "email-reports-v1"] as const;
+export const TOUR_KEYS = ["video-guides-v1", "email-reports-v1", "widget-gaps-v1"] as const;
 export type TourKey = (typeof TOUR_KEYS)[number];

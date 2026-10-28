@@ -2541,6 +2541,83 @@ export class Repository {
     ).run(ok ? "sent" : "failed", error, ok ? 1 : 0, id);
   }
 
+  /** The KB category a question belongs to: a weighted vote of the categories of its 5 closest Q&A. */
+  topCategoryOf(question: string): { id: number; name: string } | null {
+    const fts = this.buildFtsQuery(question);
+    if (!fts) return null;
+    try {
+      const rows = this.db.prepare(`
+        SELECT ranked.id AS qa_id, c.id, c.name FROM (
+          SELECT fts.rowid AS id, bm25(qa_pairs_fts, 5.0, 2.0, 1.0, 3.0) AS score FROM qa_pairs_fts fts
+          WHERE qa_pairs_fts MATCH ? ORDER BY score ASC LIMIT 5
+        ) ranked
+        JOIN qa_category_map m ON m.qa_id = ranked.id
+        JOIN categories c ON c.id = m.category_id
+        ORDER BY ranked.score ASC
+      `).all(fts) as Array<{ qa_id: number; id: number; name: string }>;
+      const rank = new Map<number, number>();
+      const votes = new Map<number, { id: number; name: string; v: number }>();
+      for (const r of rows) {
+        if (!rank.has(r.qa_id)) rank.set(r.qa_id, rank.size);
+        const cur = votes.get(r.id) ?? { id: r.id, name: r.name, v: 0 };
+        cur.v += 5 - rank.get(r.qa_id)!;
+        votes.set(r.id, cur);
+      }
+      const top = [...votes.values()].sort((a, b) => b.v - a.v)[0];
+      return top ? { id: top.id, name: top.name } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Widget question texts in [start, end), for comparing topics with the previous period. */
+  listWidgetQuestionTexts(start: number, end: number): string[] {
+    return (this.db.prepare("SELECT question FROM widget_questions WHERE created_at >= ? AND created_at < ?").all(start, end) as Array<{ question: string }>)
+      .map((r) => r.question);
+  }
+
+  /**
+   * Gap queue (DIS-234): widget questions the agent had no documented answer for, grouped by
+   * normalized text, that CS hasn't answered or dismissed since they were last asked.
+   * `emailed` = the visitor wrote to support afterwards (same session within a day, or same
+   * network within the hour before sessions existed), so the KB will learn from that ticket.
+   */
+  listWidgetGaps(since: number): Array<{ question_norm: string; question: string; answer: string; count: number; first_asked: number; last_asked: number; installations: string; emailed: number }> {
+    return this.db.prepare(`
+      SELECT q.question_norm,
+        (SELECT x.question FROM widget_questions x WHERE x.question_norm = q.question_norm AND x.status = 'unanswered' ORDER BY x.created_at DESC LIMIT 1) AS question,
+        (SELECT x.answer FROM widget_questions x WHERE x.question_norm = q.question_norm AND x.status = 'unanswered' ORDER BY x.created_at DESC LIMIT 1) AS answer,
+        COUNT(*) AS count, MIN(q.created_at) AS first_asked, MAX(q.created_at) AS last_asked,
+        GROUP_CONCAT(DISTINCT i.name) AS installations,
+        MAX(EXISTS (
+          SELECT 1 FROM widget_events e
+          WHERE e.event_type IN ('email_submit', 'follow_up_request') AND e.installation_id = q.installation_id AND e.created_at >= q.created_at
+            AND ((q.session_id IS NOT NULL AND e.session_id = q.session_id AND e.created_at < q.created_at + 86400)
+              OR (q.session_id IS NULL AND e.session_id IS NULL AND e.ip_hash = q.ip_hash AND e.created_at < q.created_at + 3600))
+        )) AS emailed
+      FROM widget_questions q
+      JOIN widget_installations i ON i.id = q.installation_id
+      LEFT JOIN widget_gap_reviews g ON g.question_norm = q.question_norm
+      WHERE q.status = 'unanswered' AND q.created_at >= ? AND (g.question_norm IS NULL OR q.created_at > g.reviewed_at)
+      GROUP BY q.question_norm
+      ORDER BY count DESC, last_asked DESC
+    `).all(since) as ReturnType<Repository["listWidgetGaps"]>;
+  }
+
+  reviewWidgetGap(questionNorm: string, status: "answered" | "dismissed", qaId: number | null, userId: number): void {
+    this.db.prepare(`
+      INSERT INTO widget_gap_reviews (question_norm, status, qa_id, reviewed_by, reviewed_at) VALUES (?, ?, ?, ?, unixepoch())
+      ON CONFLICT(question_norm) DO UPDATE SET status = excluded.status, qa_id = excluded.qa_id, reviewed_by = excluded.reviewed_by, reviewed_at = excluded.reviewed_at
+    `).run(questionNorm, status, qaId, userId);
+  }
+
+  /** A Q&A written by CS for a widget gap. Q&A hang off a ticket, so it gets a local one (hubspot_id "widget-gap-…"). */
+  createWidgetGapQA(question: string, answer: string): QAPair {
+    const ticket = this.upsertTicket({ hubspot_id: `widget-gap-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`, subject: question, content: answer, channel: "widget", status: "closed" });
+    this.markTicketProcessed(ticket.id);
+    return this.createQAPair({ ticket_id: ticket.id, question, answer, summary: answer.slice(0, 300), resolved: true, channel: "widget" });
+  }
+
   /** All widget records in [start, end), for every installation. Feeds the usage report. */
   getWidgetReportRecords(start: number, end: number): {
     installations: Array<{ id: number; name: string }>;

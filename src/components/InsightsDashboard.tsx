@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { Ticket, MessageSquare, Repeat2, Users, ArrowUpRight, ArrowDownRight, X, AlertTriangle, MousePointerClick, RefreshCw, Zap, Sparkles, ChevronDown } from "lucide-react";
 import { IssueCard, type IssueCardData } from "./IssueCard";
+import { WidgetGapQueue } from "./WidgetGapQueue";
 
 type Range = "7d" | "30d" | "90d" | "all";
 
@@ -272,6 +273,9 @@ export function InsightsDashboard({ userRole }: { userRole: string | null }) {
           </div>
         </div>
       )}
+
+      {/* Widget questions the agent couldn't answer (DIS-234): answer once, the agent learns */}
+      <WidgetGapQueue />
 
       {/* Issue Cards — synthesized story per topic */}
       <section>

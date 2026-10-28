@@ -142,10 +142,15 @@ function periodBuckets(period: ReportPeriod): { unit: string; buckets: Bucket[] 
     const bEnd = Math.min(localMidnight(addDays(first, Math.min(i + size, days)), tz), end);
     const label = size === 1
       ? new Date(bStart * 1000).toLocaleDateString("en-US", { timeZone: tz, weekday: "short", day: "numeric" }).replace(/^(\d+)\s+(\w+)$/, "$2 $1")
-      : `${md(bStart)} – ${md(bEnd - 60)}`;
+      : `${md(bStart)} – ${md(bEnd - 60)}`.replace(/(\w{3}) (\d)/g, "$1\u00a0$2");
     buckets.push({ start: bStart, end: bEnd, label });
   }
   return { unit: size === 1 ? "day" : size === 7 ? "week" : "15 days", buckets };
+}
+
+/** The app's public origin (from the OAuth redirect URI), for links in the email. */
+function appOrigin(): string | null {
+  try { return new URL(process.env.GOOGLE_OAUTH_REDIRECT_URI ?? "").origin; } catch { return null; }
 }
 
 // ─── Formatting ─────────────────────────────────────────────────────────────
@@ -397,19 +402,20 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
   // "By day" tables (one column per day / week / 15 days, depending on the report length)
   const { unit, buckets } = periodBuckets(period);
   const perBucket = (times: number[]) => buckets.map((b) => times.filter((t) => t >= b.start && t < b.end).length);
-  const byDayTable = (rows: Array<[string, Array<number | string>]>) =>
-    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;border-collapse:separate;border-spacing:0;border:1px solid ${C.line};border-radius:18px;overflow:hidden;color:${C.body}">
-      <tr style="background:${C.ice}">${th("")}${buckets.map((b) => th(esc(b.label))).join("")}</tr>
-      ${rows.map(([name, vals]) => `<tr>${td(`<span style="color:${C.slate};font-weight:600">${name}</span>`)}${vals.map((v) => td(v === 0 ? `<span style="color:${C.tealMuted}">0</span>` : `<strong>${v}</strong>`)).join("")}</tr>`).join("")}
-    </table>`;
-  const byUnitTitle = unit === "15 days" ? "per 15 days" : `by ${unit}`;
-  const questionsByDay = byDayTable([["Questions", perBucket(questions.map((q) => q.created_at))]]);
+  const byUnitTitle = unit === "15 days" ? "Every 15 days" : unit === "day" ? "Day by day" : "Week by week";
   const notAvail = buckets.map(() => "—");
-  const meetingsByDay = byDayTable([
-    ["Booked", meetingsAvailable ? perBucket(r.meetingsBooked.map((m) => m.booked_at)) : notAvail],
-    ["Happened", meetingsAvailable ? perBucket(r.meetingsInPeriod.filter((m) => meetingStatus(m, now) === "held").map((m) => m.start_time)) : notAvail],
-    ["Calendar link clicks", perBucket(r.events.filter((e) => e.event_type === "calendly_click").map((e) => e.created_at))],
-  ]);
+  const byPeriodCols: Array<[string, Array<number | string>]> = [
+    ["Questions", perBucket(questions.map((q) => q.created_at))],
+    ["Emails", perBucket(emails.map((e) => e.created_at))],
+    ["Calls booked", meetingsAvailable ? perBucket(r.meetingsBooked.map((m) => m.booked_at)) : notAvail],
+    ["Calls held", meetingsAvailable ? perBucket(r.meetingsInPeriod.filter((m) => meetingStatus(m, now) === "held").map((m) => m.start_time)) : notAvail],
+    ["Calendar clicks", perBucket(r.events.filter((e) => e.event_type === "calendly_click").map((e) => e.created_at))],
+  ];
+  const cell = (v: number | string) => v === 0 ? `<span style="color:${C.tealMuted}">0</span>` : typeof v === "number" ? `<strong>${v}</strong>` : `<span style="color:${C.tealMuted}">${v}</span>`;
+  const byPeriodTable = table(["", ...byPeriodCols.map(([name]) => name)], buckets.map((b, i) => [
+    td(`<span style="color:${C.slate};font-weight:600;white-space:nowrap">${esc(b.label)}</span>`),
+    ...byPeriodCols.map(([, vals]) => td(cell(vals[i]), { right: true })),
+  ]), byPeriodCols.map((_, i) => i + 1));
 
   const meetingsBody = !meetingsAvailable
     ? empty(calendlyOn ? `Meetings are counted from ${esc(v2Label)}.` : "Calendly isn't connected yet, so bookings aren't counted.")
@@ -442,7 +448,6 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
       td(who(v.user_email, v.account)),
     ])) + more(kbShown.length, kbVisitRows.length);
 
-  const followUps = questions.filter((q) => q.outcome === "follow_up");
   // Emails to support as cards, so you can see how fast the team answered each one. The question
   // that led to an email is the last one asked before it in the same visit.
   const questionOfEmail = new Map<number, (typeof questions)[number]>();
@@ -490,20 +495,46 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
       ? `<div style="font-size:12px;color:${C.slate};margin-top:6px">${emails.length - emailCards.length === 1 ? "1 email has" : `${emails.length - emailCards.length} emails have`} no subject and no HubSpot ticket we could find, so ${emails.length - emailCards.length === 1 ? "it's" : "they're"} only in the spreadsheet.</div>`
       : "");
 
-  // Questions nobody emailed about: what the knowledge base is missing
-  const gapReason = (q: (typeof questions)[number]) => [
-    q.status === "unanswered" ? "Agent didn't know" : "",
-    q.status === "error" ? "Answer didn't load" : "",
-    q.rating === 1 ? "Marked Not helpful" : "",
-    q.followUp?.kind === "meeting" ? "Booked a call" : "",
-  ].filter(Boolean).join(", ");
-  const gaps = followUps.filter((q) => q.followUp?.kind !== "email_submit" && q.followUp?.kind !== "follow_up_request");
-  const gapsShown = gaps.slice(0, 25);
-  const gapsBody = (gaps.length === 0 ? empty("Nothing here. The agent had an answer for everyone else.")
-    : table(["When", "Question", "Why", "Who"], gapsShown.map((q) => [
-      td(esc(fmtDateTime(q.created_at, tz))), td(`<span style="color:${C.ink}">${esc(truncate(q.question, 180))}</span>`), td(esc(gapReason(q))), td(who(q.user_email, q.account)),
-    ])) + more(gapsShown.length, gaps.length))
-    + `<div style="font-size:12px;color:${C.slate};margin-top:8px">All ${questions.length} questions and the agent's answers are in the attached spreadsheet.</div>`;
+  // What people asked about: each question takes the KB category of its closest Q&A, compared
+  // with the same number of days before the period
+  const topicCache = new Map<string, string>();
+  const topicOf = (text: string) => {
+    if (!topicCache.has(text)) topicCache.set(text, repo.topCategoryOf(text)?.name ?? "Other");
+    return topicCache.get(text)!;
+  };
+  const prevTexts = repo.listWidgetQuestionTexts(start - (end - start), start);
+  const prevByTopic = new Map<string, number>();
+  for (const t of prevTexts) prevByTopic.set(topicOf(t), (prevByTopic.get(topicOf(t)) ?? 0) + 1);
+  const byTopic = new Map<string, Array<(typeof questions)[number]>>();
+  for (const q of questions) byTopic.set(topicOf(q.question), [...(byTopic.get(topicOf(q.question)) ?? []), q]);
+  const topics = [...byTopic.entries()].sort((a, b) => b[1].length - a[1].length);
+  const topicsShown = topics.slice(0, 6);
+  const change = (now_: number, before: number) =>
+    prevTexts.length === 0 ? ""
+    : before === 0 ? `<span style="color:${C.teal700}">new</span>`
+    : now_ === before ? "same as before"
+    : `${now_ > before ? "&uarr;" : "&darr;"} ${Math.abs(now_ - before)} vs before`;
+  const otherTopics = topics.slice(6);
+  const topicsBody = topics.length === 0 ? empty("Nobody asked the widget anything.")
+    : table(["Topic", "Questions", "Answered"], topicsShown.map(([name, qs]) => {
+      const example = [...qs].reverse().find((q) => q.outcome === "resolved") ?? qs[qs.length - 1];
+      return [
+        td(`<div style="color:${C.ink};font-weight:600;font-size:13px">${esc(name)}</div><div style="color:${C.slate};margin-top:2px">e.g. “${esc(truncate(example.question, 110))}”</div>`),
+        td(`<strong style="font-size:13px;color:${C.ink}">${qs.length}</strong><div style="color:${C.slate};margin-top:2px">${change(qs.length, prevByTopic.get(name) ?? 0)}</div>`, { right: true }),
+        td(`<strong style="font-size:13px;color:${C.ink}">${Math.round((qs.filter((q) => q.outcome === "resolved").length / qs.length) * 100)}%</strong>`, { right: true }),
+      ];
+    }), [1, 2])
+      + (otherTopics.length ? `<div style="font-size:12px;color:${C.slate};margin-top:6px">Plus ${plural(otherTopics.reduce((a, [, qs]) => a + qs.length, 0), "question")} on ${plural(otherTopics.length, "other topic")}.</div>` : "");
+  // The questions themselves go to the app's gap queue, where CS answers them once
+  const unansweredCount = questions.filter((q) => q.status === "unanswered").length;
+  const gapsUrl = appOrigin() ? `${appOrigin()}/?tab=dashboard` : null;
+  const gapsNote = unansweredCount === 0 ? ""
+    : `<div style="margin-top:14px;background:${C.mist};border:1px solid ${C.line};border-radius:18px;padding:14px 18px;font-size:13px;color:${C.body}">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+          <td valign="middle">The agent had no answer for <strong style="color:${C.ink}">${plural(unansweredCount, "question")}</strong>. They're on the app's Dashboard so the team can answer each one once and the agent learns it.</td>
+          ${gapsUrl ? `<td align="right" valign="middle" style="padding-left:12px;white-space:nowrap"><a href="${esc(gapsUrl)}" style="display:inline-block;border:1.5px solid ${C.teal};color:${C.teal700};font-size:12px;font-weight:600;text-decoration:none;border-radius:100px;padding:6px 16px">Answer them &rarr;</a></td>` : ""}
+        </tr></table>
+      </div>`;
 
   const label = days === 7 ? "7-day" : days === 30 ? "30-day" : `${days}-day`;
   // Stat band like the home page's "Proven impact" band: deep teal gradient, white numbers
@@ -535,11 +566,10 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
 <tr><td style="height:28px;font-size:0;line-height:0">&nbsp;</td></tr>
 ${kpis}
 ${section("Emails to support", emailsBody, emailsHint)}
-${section("Questions the agent couldn't answer", gapsBody, "Nobody emailed about these. Add the missing answers to the knowledge base so the agent can handle them next time.")}
+${section("What people asked about", topicsBody + gapsNote, prevTexts.length ? `Grouped by knowledge base topic, compared with the ${days} days before.` : "Grouped by knowledge base topic.")}
 ${section("The numbers", table(["", "Total", "Details"], summaryRows, [1]), r.installations.length > 1 ? `For all ${r.installations.length} sites with the widget.` : "")}
 ${r.installations.length > 1 ? section("By site", table(["Site", "Calls", "KB visits", "Emails", "Ratings", "Questions"], perInstall, [1, 2, 3, 4, 5])) : ""}
-${section(`Questions ${byUnitTitle}`, questionsByDay)}
-${section(`Meetings ${byUnitTitle}`, meetingsByDay)}
+${section(byUnitTitle, byPeriodTable)}
 ${section("Calls booked", meetingsBody)}
 ${section("Ratings", ratingsBody)}
 ${section("Knowledge base visits", kbBody)}

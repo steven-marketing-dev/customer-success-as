@@ -854,6 +854,18 @@ function initDb(db: Database.Database) {
     }
   } catch { /* table may not exist yet */ }
 
+  // Gap queue (DIS-234): what CS did with a question the widget agent couldn't answer, per
+  // normalized question. A newer unanswered question with the same text reopens it.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS widget_gap_reviews (
+      question_norm TEXT PRIMARY KEY,
+      status TEXT NOT NULL CHECK(status IN ('answered', 'dismissed')),
+      qa_id INTEGER REFERENCES qa_pairs(id) ON DELETE SET NULL,
+      reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_at INTEGER NOT NULL DEFAULT (unixepoch())
+    )
+  `);
+
   // Unique index on source_id (NULLs allowed for legacy rows pending backfill).
   try {
     db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_articles_source_id ON kb_articles(source_id) WHERE source_id IS NOT NULL");
