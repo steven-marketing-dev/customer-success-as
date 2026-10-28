@@ -323,7 +323,7 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
   }
   notes.push("Articles read after opening the knowledge base from the menu: Not available (external site).");
   notes.push(hubspotOn
-    ? "HubSpot tickets: matched to each widget email by subject and send time; the status is refreshed hourly."
+    ? "HubSpot tickets: matched to each widget email by the time HubSpot created the ticket (within minutes of the email); the status is refreshed hourly."
     : "HubSpot ticket status: Not available — HubSpot is not connected to the app.");
   notes.push("Account / user also uses the email a visitor typed in the widget, for every record of that visit.");
   notes.push("Unique users are anonymous visitors (by browser network) unless the host page identifies the user.");

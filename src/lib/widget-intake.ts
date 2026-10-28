@@ -12,6 +12,9 @@ import { isIntakeEmailConfigured, getInboxAddress, sendWidgetIntakeEmail } from 
 
 export type IntakeVia = "inbound_email" | "crm_ticket";
 
+/** How the submission was sent; ticketId only on the CRM-ticket path (HubSpot returns no id for an inbound email). */
+export interface IntakeResult { via: IntakeVia; ticketId?: string }
+
 export function isValidEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 }
@@ -29,7 +32,7 @@ export async function submitWidgetIntake(data: {
   sessionId: string | null;
   /** Extra footer line, e.g. where in the widget the request came from */
   origin?: string;
-}): Promise<IntakeVia> {
+}): Promise<IntakeResult> {
   if (isIntakeEmailConfigured()) {
     // Human-readable body: the visitor's message first, then a metadata footer.
     // The "Visitor email:" line is parsed by the n8n workflow to address the reply
@@ -47,17 +50,17 @@ export async function submitWidgetIntake(data: {
       subject: data.subject,
       text: `${data.description}\n\n—\n${footer.join("\n")}`,
     });
-    return "inbound_email";
+    return { via: "inbound_email" };
   }
 
   const token = process.env.HUBSPOT_ACCESS_TOKEN;
   if (!token) throw new Error("Ticket backend not configured");
-  await new HubSpotClient(token).createWidgetTicket({
+  const ticket = await new HubSpotClient(token).createWidgetTicket({
     subject: data.subject,
     description: data.origin ? `${data.description}\n\n${data.origin}` : data.description,
     fromEmail: data.email,
     sourceUrl: data.sourceUrl,
     productName: data.installation.product_name,
   });
-  return "crm_ticket";
+  return { via: "crm_ticket", ticketId: ticket.id };
 }

@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const via = await submitWidgetIntake({ installation, subject, description, email, sourceUrl, sessionId: visitor.session_id });
+    const { via, ticketId } = await submitWidgetIntake({ installation, subject, description, email, sourceUrl, sessionId: visitor.session_id });
 
     // Record the submission as an analytics event (best-effort, never blocks the response)
     try {
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
         event_type: "email_submit",
         source_url: sourceUrl,
         ip_hash: ipHash,
-        metadata: { subject, visitorEmail: email, via },
+        metadata: { subject, visitorEmail: email, via, ...(ticketId ? { ticketId } : {}) },
       }, { ...visitor, user_email: visitor.user_email ?? email.toLowerCase() });
     } catch (e) {
       console.warn("[widget/ticket] event record failed:", e);
