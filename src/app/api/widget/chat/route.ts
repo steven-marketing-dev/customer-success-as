@@ -7,6 +7,7 @@ import { streamChat, type ChatMessage } from "@/lib/ai/provider";
 import { groundingRules } from "@/lib/ai/groundingRules";
 import { corsHeaders, resolveInstallation, checkAndRecordRate, hashIp, extractClientIp, readWidgetContext } from "@/lib/widget-auth";
 import { sanitizeCalendlyLinks, withWidgetUtm } from "@/lib/calendly";
+import { isKnowledgeGapAnswer } from "@/lib/widget-gaps";
 
 export const maxDuration = 60;
 
@@ -283,6 +284,7 @@ ${context}
             answer: cleanAnswer,
             articles: doneArticles.map((a) => ({ id: a.id, title: a.title, url: a.url })),
             ip_hash: ipHash,
+            status: isKnowledgeGapAnswer(cleanAnswer) ? "unanswered" : "ok",
           }, visitor);
         } catch { /* analytics logging is best-effort */ }
 
