@@ -1663,7 +1663,7 @@ export class Repository {
     answer: string;
     articles: Array<{ id: number; title: string; url: string }>;
     ip_hash: string;
-    status?: "ok" | "error";
+    status?: "ok" | "error" | "unanswered";
   }, ctx?: WidgetVisitorContext): number | null {
     try {
       const info = this.db.prepare(
@@ -2552,6 +2552,7 @@ export class Repository {
     meetingsInPeriod: WidgetMeeting[];
     sessionRatings: Array<{ exchange_id: string; installation_id: number; rating: number }>;
     sessionFollowUps: Array<{ event_id: number | null; kind: "email_submit" | "follow_up_request" | "meeting"; session_id: string; created_at: number; exchange_id: string | null }>;
+    ipFollowUps: Array<{ event_id: number; installation_id: number; ip_hash: string; created_at: number }>;
   } {
     const range = [start, end];
     const between = "created_at >= ? AND created_at < ?";
@@ -2585,6 +2586,14 @@ export class Repository {
         WHERE q.created_at >= ? AND q.created_at < ?
       `).all(...range) as Array<{ exchange_id: string; installation_id: number; rating: number }>,
       sessionFollowUps,
+      // Emails sent before sessions existed: matched to questions by network (ip_hash) instead,
+      // up to 1h past the end
+      ipFollowUps: questions.some((q) => !q.session_id)
+        ? this.db.prepare(`
+            SELECT id AS event_id, installation_id, ip_hash, created_at FROM widget_events
+            WHERE event_type = 'email_submit' AND session_id IS NULL AND created_at >= ? AND created_at < ?
+          `).all(start, end + 3600) as Array<{ event_id: number; installation_id: number; ip_hash: string; created_at: number }>
+        : [],
     };
   }
 

@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import { hashSync } from "bcryptjs";
+import { isKnowledgeGapAnswer } from "@/lib/widget-gaps";
 
 // Types
 
@@ -300,7 +301,7 @@ export interface WidgetQuestion {
   session_id: string | null;
   user_email: string | null;
   account: string | null;
-  status: "ok" | "error";
+  status: "ok" | "error" | "unanswered";
   created_at: number;
 }
 
@@ -828,6 +829,19 @@ function initDb(db: Database.Database) {
   try {
     db.prepare("INSERT OR IGNORE INTO app_meta (key, value) VALUES ('widget_tracking_v2_since', ?)")
       .run(String(Math.floor(Date.now() / 1000)));
+  } catch { /* table may not exist yet */ }
+
+  // Mark past widget answers where the agent had no documented guidance (DIS-234). Once.
+  try {
+    if (!db.prepare("SELECT 1 FROM app_meta WHERE key = 'widget_gap_backfill'").get()) {
+      const mark = db.prepare("UPDATE widget_questions SET status = 'unanswered' WHERE id = ?");
+      db.transaction(() => {
+        for (const q of db.prepare("SELECT id, answer FROM widget_questions WHERE status = 'ok'").all() as Array<{ id: number; answer: string }>) {
+          if (isKnowledgeGapAnswer(q.answer)) mark.run(q.id);
+        }
+        db.prepare("INSERT INTO app_meta (key, value) VALUES ('widget_gap_backfill', ?)").run(String(Math.floor(Date.now() / 1000)));
+      })();
+    }
   } catch { /* table may not exist yet */ }
 
   // Unique index on source_id (NULLs allowed for legacy rows pending backfill).

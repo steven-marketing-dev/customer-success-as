@@ -235,14 +235,21 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     followUpsBySession.set(f.session_id, list);
   }
   // The email / booking that followed a question in the same visit (within 24h). A follow-up
-  // request belongs only to the answer that was rated Not helpful.
-  const followUpOf = (q: (typeof r.questions)[number]) =>
-    q.session_id ? (followUpsBySession.get(q.session_id) ?? []).find((f) =>
+  // request belongs only to the answer that was rated Not helpful. Questions from before sessions
+  // existed take an email sent from the same network within the hour instead.
+  const followUpOf = (q: (typeof r.questions)[number]): { event_id: number | null; kind: (typeof r.sessionFollowUps)[number]["kind"]; created_at: number } | null => {
+    if (!q.session_id) {
+      const f = r.ipFollowUps.find((x) => x.installation_id === q.installation_id && x.ip_hash === q.ip_hash &&
+        x.created_at >= q.created_at && x.created_at < q.created_at + 3600);
+      return f ? { event_id: f.event_id, kind: "email_submit", created_at: f.created_at } : null;
+    }
+    return (followUpsBySession.get(q.session_id) ?? []).find((f) =>
       f.created_at >= q.created_at && f.created_at < q.created_at + 86400 &&
-      (f.kind !== "follow_up_request" || !f.exchange_id || f.exchange_id === q.exchange_id)) ?? null : null;
+      (f.kind !== "follow_up_request" || !f.exchange_id || f.exchange_id === q.exchange_id)) ?? null;
+  };
   const outcomeOf = (q: (typeof r.questions)[number]): QuestionOutcome => {
     const rating = ratingByExchange.get(`${q.installation_id}:${q.exchange_id}`);
-    if (q.status === "error" || rating === 1) return "follow_up";
+    if (q.status === "error" || q.status === "unanswered" || rating === 1) return "follow_up";
     if (followUpOf(q)) return "follow_up";
     if (rating === 2 || rating === 3) return "resolved";
     if (q.session_id) return "resolved";
@@ -266,6 +273,7 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
   const tickets = repo.getWidgetHubspotTickets([
     ...emailEvents.map((e) => e.id),
     ...r.sessionFollowUps.map((f) => f.event_id).filter((x): x is number => x != null),
+    ...r.ipFollowUps.map((f) => f.event_id),
   ]);
   const emails = emailEvents.map((e) => {
     let meta: { subject?: string; visitorEmail?: string } = {};
@@ -303,6 +311,7 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     questions: questions.length,
     questions_resolved: outcomeCount("resolved"),
     questions_follow_up: outcomeCount("follow_up"),
+    questions_unanswered: questions.filter((q) => q.status === "unanswered").length,
     questions_unknown: outcomeCount("unknown"),
   };
 
@@ -311,7 +320,7 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
   if (!calendlyOn) notes.push("Meetings booked/held: Not available — Calendly is not connected to the app yet.");
   else if (v2Partial) notes.push(`Meetings booked/held: Not available before ${v2Label}.`);
   if (v2Partial) {
-    notes.push(`Email subject, resolved/follow-up status and widget sessions: Not available before ${v2Label}.`);
+    notes.push(`Email subject and widget sessions: Not available before ${v2Label}. Before then, a question counts as followed by an email only when the email came from the same network within the hour.`);
   }
   notes.push(`Account and user: only where the host page passes them to the widget${trackingSince ? `, since ${v2Label}` : ""}; older records show "—".`);
   const sourceNotes: Array<[string, number | null]> = [
@@ -327,7 +336,7 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     : "HubSpot ticket status: Not available — HubSpot is not connected to the app.");
   notes.push("Account / user also uses the email a visitor typed in the widget, for every record of that visit.");
   notes.push("Unique users are anonymous visitors (by browser network) unless the host page identifies the user.");
-  if (!v2Partial) notes.push("Resolved = rated OK/Great, or no email or meeting followed in the same session within 24 hours.");
+  notes.push("Needed follow-up = rated Not helpful, the answer failed, the agent said it had no documented guidance, or an email or meeting followed within 24 hours. Resolved = the other questions of a tracked session.");
 
   // ─── HTML ─────────────────────────────────────────────────────────────────
   const periodEndInclusive = end - 60;
@@ -357,7 +366,7 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
       hubspotOn && emails.length ? `HubSpot: ${ticketCount("closed")} closed · ${ticketCount("open")} open${ticketCount("not_found") ? ` · ${ticketCount("not_found")} not found` : ""}` : "",
     ].filter(Boolean).join(" · "), { muted: true })],
     [td("Ratings"), td(`<strong>${ratingTotal}</strong>`, { right: true }), td(ratingTotal ? `Avg ${ratingAvg!.toFixed(2)} / 3 (Great ${byRating(3)} · OK ${byRating(2)} · Not helpful ${byRating(1)})` : "Average: —", { muted: true })],
-    [td("Questions asked"), td(`<strong>${questions.length}</strong>`, { right: true }), td(`Resolved ${outcomeCount("resolved")} · Needed follow-up ${outcomeCount("follow_up")} · Unknown ${outcomeCount("unknown")}`, { muted: true })],
+    [td("Questions asked"), td(`<strong>${questions.length}</strong>`, { right: true }), td(`Resolved ${outcomeCount("resolved")} · Needed follow-up ${outcomeCount("follow_up")}${summary.questions_unanswered ? ` (agent had no documented answer: ${summary.questions_unanswered})` : ""} · Unknown ${outcomeCount("unknown")}`, { muted: true })],
   ];
 
   const perInstall = r.installations.map((i) => {
@@ -432,6 +441,7 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     const kind = q.followUp?.kind;
     const reasons = [
       q.status === "error" ? "answer failed" : "",
+      q.status === "unanswered" ? "agent had no documented answer" : "",
       q.rating === 1 ? "rated Not helpful" : "",
       kind === "follow_up_request" ? "asked to be contacted" : kind === "email_submit" ? "then emailed support" : kind === "meeting" ? "then booked a meeting" : "",
     ].filter(Boolean);
@@ -448,7 +458,7 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
   };
   const followShown = followUps.slice(0, 15);
   const questionsBody = (followUps.length === 0
-    ? empty(v2Partial ? "Follow-up status is not available for this period." : "No questions needed follow-up in this period.")
+    ? empty("No questions needed follow-up in this period.")
     : followShown.map((q) => `
       <div style="border:1px solid #e2e8f0;border-left:3px solid #d97706;border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:12px">
         <div style="color:#64748b">${esc(fmtDateTime(q.created_at, tz))} · ${esc(instLabel(q.installation_id))} · ${who(q.user_email, q.account)} · ${followUpReason(q)}</div>
