@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
   const days = parseDays(body.days);
   const meetingSync = body.syncMeetings && isCalendlyConfigured() ? await syncWidgetMeetings() : null;
   try {
-    await sendWidgetReport(g.repo, g.user, trailingPeriod(days, userReportTimezone(g.user)));
+    await sendWidgetReport(g.repo, g.user, trailingPeriod(days, userReportTimezone(g.user)), { sentBy: g.user.display_name || g.user.username });
     return NextResponse.json({ ok: true, to: g.user.email, days, meetingSync });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err), meetingSync }, { status: 502 });

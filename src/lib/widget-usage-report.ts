@@ -92,6 +92,30 @@ export function trailingPeriod(days: number, tz: string, nowMs = Date.now()): Re
   return { days, start: localMidnight(addDays(today, -days), tz), end: localMidnight(today, tz), timezone: tz };
 }
 
+export const MAX_CUSTOM_PERIOD_DAYS = 92;
+
+/**
+ * Local calendar days `from`..`to` (YYYY-MM-DD, both inclusive) in `tz`, for on-demand reports.
+ * Returns an error string when the range is invalid, in the future or longer than 92 days.
+ */
+export function customPeriod(from: string, to: string, tz: string, nowMs = Date.now()): ReportPeriod | string {
+  const parse = (v: string): LocalDate | null => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    if (!m) return null;
+    const date = { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
+    const check = addDays(date, 0);
+    return check.y === date.y && check.m === date.m && check.d === date.d ? date : null;
+  };
+  const a = parse(from);
+  const b = parse(to);
+  if (!a || !b) return "Dates must be valid YYYY-MM-DD";
+  const days = daysBetween(a, b) + 1;
+  if (days < 1) return "The start date must be on or before the end date";
+  if (days > MAX_CUSTOM_PERIOD_DAYS) return `The period can be at most ${MAX_CUSTOM_PERIOD_DAYS} days`;
+  if (daysBetween(localDateOf(nowMs, tz), b) > 0) return "The end date can't be in the future";
+  return { days, start: localMidnight(a, tz), end: localMidnight(addDays(b, 1), tz), timezone: tz };
+}
+
 /** Columns for the "by day" tables: one per day for 7-day reports, per week for 30, per 15 days for 90. */
 interface Bucket { start: number; end: number; label: string }
 
@@ -167,7 +191,12 @@ export interface WidgetUsageReport {
   summary: Record<string, number | null>;
 }
 
-export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod): WidgetUsageReport {
+export interface ReportOptions {
+  /** Set for reports sent by hand (preview or "Send report now"): replaces the subscription footer. */
+  sentBy?: string;
+}
+
+export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, opts: ReportOptions = {}): WidgetUsageReport {
   const { start, end, timezone: tz, days } = period;
   const r = repo.getWidgetReportRecords(start, end);
   const since = repo.getWidgetDataSince();
@@ -378,7 +407,9 @@ ${section("Knowledge base visits", kbBody)}
 <tr><td style="padding:16px 28px 24px">
   <h2 style="font-size:13px;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid #e2e8f0;padding-bottom:4px;margin:0 0 10px">Data availability</h2>
   <ul style="font-size:12px;color:#475569;margin:0;padding-left:18px">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>
-  <div style="font-size:11px;color:#94a3b8;margin-top:14px">You receive this because the ${label} report is on in your profile (My Profile → Email reports).</div>
+  <div style="font-size:11px;color:#94a3b8;margin-top:14px">${opts.sentBy
+    ? `Sent on demand by ${esc(opts.sentBy)}. It is not part of the scheduled reports.`
+    : `You receive this because the ${label} report is on in your profile (My Profile → Email reports).`}</div>
 </td></tr>
 </table>
 </body></html>`;
