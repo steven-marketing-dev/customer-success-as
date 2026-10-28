@@ -1,16 +1,11 @@
 import { NextRequest } from "next/server";
-import { HubSpotClient } from "@/lib/hubspot";
 import { Repository } from "@/lib/db/repository";
 import { getDb } from "@/lib/db/index";
 import { corsHeaders, resolveInstallation, extractClientIp, hashIp, checkAndRecordRate, readWidgetContext } from "@/lib/widget-auth";
-import { isIntakeEmailConfigured, getInboxAddress, sendWidgetIntakeEmail } from "@/lib/email/intake";
+import { isValidEmail, isWidgetIntakeConfigured, submitWidgetIntake } from "@/lib/widget-intake";
 
 const MAX_SUBJECT = 200;
 const MAX_DESCRIPTION = 6000;
-
-function isValidEmail(s: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
-}
 
 export async function OPTIONS(req: NextRequest) {
   return new Response(null, { status: 204, headers: corsHeaders(req.headers.get("origin")) });
@@ -56,14 +51,7 @@ export async function POST(req: NextRequest) {
 
   const visitor = readWidgetContext(body);
 
-  // Preferred path: forward the submission into the connected HubSpot inbox as a
-  // real inbound email. HubSpot creates a native email-channel thread + ticket, so
-  // the n8n auto-responder has a thread to reply through and the original message
-  // is preserved. Falls back to the direct CRM-ticket path when Mailgun/inbox env
-  // isn't configured, so submissions never break during rollout.
-  const useIntakeEmail = isIntakeEmailConfigured();
-  const token = process.env.HUBSPOT_ACCESS_TOKEN;
-  if (!useIntakeEmail && !token) {
+  if (!isWidgetIntakeConfigured()) {
     console.error("[widget/ticket] no intake email config and HUBSPOT_ACCESS_TOKEN not set");
     return new Response(JSON.stringify({ error: "Ticket backend not configured" }), {
       status: 503, headers: { "Content-Type": "application/json", ...cors },
@@ -71,38 +59,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    let via: "inbound_email" | "crm_ticket";
-
-    if (useIntakeEmail) {
-      // Human-readable body: the visitor's message first, then a metadata footer.
-      // The "Visitor email:" line is parsed by the n8n workflow to address the reply
-      // to the visitor (HubSpot sets the ticket contact to the intake address, not
-      // the visitor, on this inbound email).
-      const footer: string[] = [`Visitor email: ${email}`];
-      if (installation.product_name) footer.push(`Product: ${installation.product_name}`);
-      if (sourceUrl) footer.push(`Page: ${sourceUrl}`);
-      if (visitor.session_id) footer.push(`Widget session: ${visitor.session_id}`);
-      footer.push("Submitted via the help widget");
-      const text = `${description}\n\n—\n${footer.join("\n")}`;
-
-      await sendWidgetIntakeEmail({
-        visitorEmail: email,
-        toInbox: getInboxAddress()!,
-        subject,
-        text,
-      });
-      via = "inbound_email";
-    } else {
-      const hubspot = new HubSpotClient(token!);
-      await hubspot.createWidgetTicket({
-        subject,
-        description,
-        fromEmail: email,
-        sourceUrl,
-        productName: installation.product_name,
-      });
-      via = "crm_ticket";
-    }
+    const via = await submitWidgetIntake({ installation, subject, description, email, sourceUrl, sessionId: visitor.session_id });
 
     // Record the submission as an analytics event (best-effort, never blocks the response)
     try {

@@ -7,8 +7,9 @@
  * a short detail section and a CSV with every record.
  */
 import type { Repository } from "@/lib/db/repository";
-import type { WidgetMeeting } from "@/lib/db/index";
+import type { WidgetMeeting, WidgetHubspotTicket } from "@/lib/db/index";
 import { isCalendlyConfigured, meetingStatus } from "@/lib/widget-meetings";
+import { isHubspotTicketSyncConfigured, hubspotTicketUrl } from "@/lib/widget-tickets";
 
 export const REPORT_PERIODS = [7, 30, 90] as const;
 export type ReportPeriodDays = (typeof REPORT_PERIODS)[number];
@@ -165,6 +166,14 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+/** "45 min", "19 h", "3 days" */
+function fmtDuration(seconds: number): string {
+  const s = Math.max(0, seconds);
+  if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min`;
+  if (s < 2 * 86400) return `${Math.round(s / 3600)} h`;
+  return `${Math.round(s / 86400)} days`;
+}
+
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s;
 }
@@ -198,7 +207,15 @@ export interface ReportOptions {
 
 export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, opts: ReportOptions = {}): WidgetUsageReport {
   const { start, end, timezone: tz, days } = period;
-  const r = repo.getWidgetReportRecords(start, end);
+  const raw = repo.getWidgetReportRecords(start, end);
+  // A visitor who typed their email in the widget (email form or follow-up request) is named on
+  // every record of that visit, not just the email itself
+  const sessionEmails = repo.getWidgetSessionEmails([...new Set(
+    [...raw.questions, ...raw.ratings, ...raw.events, ...raw.articleClicks].map((x) => x.session_id).filter((x): x is string => !!x),
+  )]);
+  const named = <T extends { session_id: string | null; user_email: string | null }>(xs: T[]): T[] =>
+    xs.map((x) => (x.user_email || !x.session_id || !sessionEmails.has(x.session_id) ? x : { ...x, user_email: sessionEmails.get(x.session_id)! }));
+  const r = { ...raw, questions: named(raw.questions), ratings: named(raw.ratings), events: named(raw.events), articleClicks: named(raw.articleClicks) };
   const since = repo.getWidgetDataSince();
   const trackingSince = Number(repo.getAppMeta("widget_tracking_v2_since") ?? 0) || null;
   const v2Partial = trackingSince == null || start < trackingSince;
@@ -211,21 +228,27 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
 
   // Questions → outcome
   const ratingByExchange = new Map(r.sessionRatings.map((x) => [`${x.installation_id}:${x.exchange_id}`, x.rating]));
-  const followUpsBySession = new Map<string, number[]>();
+  const followUpsBySession = new Map<string, typeof r.sessionFollowUps>();
   for (const f of r.sessionFollowUps) {
     const list = followUpsBySession.get(f.session_id) ?? [];
-    list.push(f.created_at);
+    list.push(f);
     followUpsBySession.set(f.session_id, list);
   }
+  // The email / booking that followed a question in the same visit (within 24h). A follow-up
+  // request belongs only to the answer that was rated Not helpful.
+  const followUpOf = (q: (typeof r.questions)[number]) =>
+    q.session_id ? (followUpsBySession.get(q.session_id) ?? []).find((f) =>
+      f.created_at >= q.created_at && f.created_at < q.created_at + 86400 &&
+      (f.kind !== "follow_up_request" || !f.exchange_id || f.exchange_id === q.exchange_id)) ?? null : null;
   const outcomeOf = (q: (typeof r.questions)[number]): QuestionOutcome => {
     const rating = ratingByExchange.get(`${q.installation_id}:${q.exchange_id}`);
     if (q.status === "error" || rating === 1) return "follow_up";
-    if (q.session_id && (followUpsBySession.get(q.session_id) ?? []).some((t) => t >= q.created_at && t < q.created_at + 86400)) return "follow_up";
+    if (followUpOf(q)) return "follow_up";
     if (rating === 2 || rating === 3) return "resolved";
     if (q.session_id) return "resolved";
     return "unknown";
   };
-  const questions = r.questions.map((q) => ({ ...q, outcome: outcomeOf(q), rating: ratingByExchange.get(`${q.installation_id}:${q.exchange_id}`) ?? null }));
+  const questions = r.questions.map((q) => ({ ...q, outcome: outcomeOf(q), rating: ratingByExchange.get(`${q.installation_id}:${q.exchange_id}`) ?? null, followUp: followUpOf(q) }));
   const outcomeCount = (o: QuestionOutcome) => questions.filter((q) => q.outcome === o).length;
 
   // KB usage: menu visits + article links opened from answers
@@ -237,12 +260,20 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     ...r.articleClicks.map((c) => ({ created_at: c.created_at, source: "Answer link", title: c.article_title, url: c.article_url, user_email: c.user_email, account: c.account })),
   ].sort((a, b) => a.created_at - b.created_at);
 
-  // Emails sent
-  const emails = r.events.filter((e) => e.event_type === "email_submit").map((e) => {
+  // Emails sent: the email form plus "Not helpful" follow-up requests, each with its HubSpot ticket
+  const hubspotOn = isHubspotTicketSyncConfigured();
+  const emailEvents = r.events.filter((e) => e.event_type === "email_submit" || e.event_type === "follow_up_request");
+  const tickets = repo.getWidgetHubspotTickets([
+    ...emailEvents.map((e) => e.id),
+    ...r.sessionFollowUps.map((f) => f.event_id).filter((x): x is number => x != null),
+  ]);
+  const emails = emailEvents.map((e) => {
     let meta: { subject?: string; visitorEmail?: string } = {};
     try { meta = e.metadata ? JSON.parse(e.metadata) : {}; } catch { /* */ }
-    return { ...e, subject: meta.subject ?? null, visitorEmail: meta.visitorEmail ?? e.user_email ?? null };
+    return { ...e, subject: meta.subject ?? null, visitorEmail: meta.visitorEmail ?? e.user_email ?? null, ticket: tickets.get(e.id) ?? null };
   });
+  const followUpRequests = emails.filter((e) => e.event_type === "follow_up_request").length;
+  const ticketCount = (st: WidgetHubspotTicket["status"]) => emails.filter((e) => e.ticket?.status === st).length;
 
   // Ratings
   const ratingTotal = r.ratings.length;
@@ -264,6 +295,9 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     kb_unique_users: kbUnique,
     kb_visits: kbVisits,
     emails_sent: emails.length,
+    follow_up_requests: followUpRequests,
+    hubspot_tickets_closed: hubspotOn ? ticketCount("closed") : null,
+    hubspot_tickets_open: hubspotOn ? ticketCount("open") : null,
     ratings: ratingTotal,
     rating_avg: ratingAvg,
     questions: questions.length,
@@ -288,6 +322,10 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     if (t != null && t > start) notes.push(`${label}: recorded since ${fmtDate(t, tz)}.`);
   }
   notes.push("Articles read after opening the knowledge base from the menu: Not available (external site).");
+  notes.push(hubspotOn
+    ? "HubSpot tickets: matched to each widget email by subject and send time; the status is refreshed hourly."
+    : "HubSpot ticket status: Not available — HubSpot is not connected to the app.");
+  notes.push("Account / user also uses the email a visitor typed in the widget, for every record of that visit.");
   notes.push("Unique users are anonymous visitors (by browser network) unless the host page identifies the user.");
   if (!v2Partial) notes.push("Resolved = rated OK/Great, or no email or meeting followed in the same session within 24 hours.");
 
@@ -314,7 +352,10 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     [td("Meetings held"), td(meetingsAvailable ? `<strong>${held}</strong>` : na, { right: true }), td(meetingsAvailable ? `Held = ended, not canceled, not marked no-show` : "", { muted: true })],
     [td("KB — unique users"), td(`<strong>${kbUnique}</strong>`, { right: true }), td("", { muted: true })],
     [td("KB — total visits"), td(`<strong>${kbVisits}</strong>`, { right: true }), td(`${kbMenu.length} from the menu, ${r.articleClicks.length} from article links in answers`, { muted: true })],
-    [td("Emails sent"), td(`<strong>${emails.length}</strong>`, { right: true }), td("", { muted: true })],
+    [td("Emails sent"), td(`<strong>${emails.length}</strong>`, { right: true }), td([
+      followUpRequests ? `${followUpRequests} follow-up request${followUpRequests === 1 ? "" : "s"} after a Not helpful rating` : "",
+      hubspotOn && emails.length ? `HubSpot: ${ticketCount("closed")} closed · ${ticketCount("open")} open${ticketCount("not_found") ? ` · ${ticketCount("not_found")} not found` : ""}` : "",
+    ].filter(Boolean).join(" · "), { muted: true })],
     [td("Ratings"), td(`<strong>${ratingTotal}</strong>`, { right: true }), td(ratingTotal ? `Avg ${ratingAvg!.toFixed(2)} / 3 (Great ${byRating(3)} · OK ${byRating(2)} · Not helpful ${byRating(1)})` : "Average: —", { muted: true })],
     [td("Questions asked"), td(`<strong>${questions.length}</strong>`, { right: true }), td(`Resolved ${outcomeCount("resolved")} · Needed follow-up ${outcomeCount("follow_up")} · Unknown ${outcomeCount("unknown")}`, { muted: true })],
   ];
@@ -351,10 +392,24 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
       td(esc(instLabel(m.installation_id))), td(who(m.invitee_email, null)),
     ]));
 
+  // HubSpot ticket state for a widget email: "Closed in 19 h" / "Open for 2 days" / "Not found"
+  const ticketText = (t: WidgetHubspotTicket | null, sentAt: number) =>
+    !t ? "Not checked yet"
+    : t.status === "closed" ? `Closed in ${fmtDuration((t.closed_at ?? now) - sentAt)}`
+    : t.status === "open" ? `Open for ${fmtDuration(now - sentAt)}`
+    : "Not found in HubSpot";
+  const ticketCell = (t: WidgetHubspotTicket | null, sentAt: number) => {
+    const text = esc(ticketText(t, sentAt));
+    const url = t?.hubspot_ticket_id ? hubspotTicketUrl(t.hubspot_ticket_id) : null;
+    const color = t?.status === "closed" ? "#0d9488" : t?.status === "open" ? "#d97706" : "#94a3b8";
+    return url ? `<a href="${esc(url)}" style="color:${color}">${text}</a>` : `<span style="color:${color}">${text}</span>`;
+  };
+
   const emailShown = emails.slice(0, 25);
   const emailsBody = emails.length === 0 ? empty("No emails sent through the widget in this period.")
-    : table(["Sent", "Subject", "Account / user"], emailShown.map((e) => [
+    : table(["Sent", "Subject", "Account / user", ...(hubspotOn ? ["HubSpot ticket"] : [])], emailShown.map((e) => [
       td(esc(fmtDateTime(e.created_at, tz))), td(e.subject ? esc(truncate(e.subject, 120)) : na), td(who(e.visitorEmail, e.account)),
+      ...(hubspotOn ? [td(ticketCell(e.ticket, e.created_at))] : []),
     ])) + more(emailShown.length, emails.length);
 
   const ratingsShown = r.ratings.slice(0, 25);
@@ -373,14 +428,33 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     ])) + more(kbShown.length, kbVisitRows.length);
 
   const followUps = questions.filter((q) => q.outcome === "follow_up");
+  const followUpReason = (q: (typeof questions)[number]) => {
+    const kind = q.followUp?.kind;
+    const reasons = [
+      q.status === "error" ? "answer failed" : "",
+      q.rating === 1 ? "rated Not helpful" : "",
+      kind === "follow_up_request" ? "asked to be contacted" : kind === "email_submit" ? "then emailed support" : kind === "meeting" ? "then booked a meeting" : "",
+    ].filter(Boolean);
+    return reasons.join(" · ");
+  };
+  // Whether anyone picked it up: the HubSpot ticket of the email that followed, if any
+  const followUpStatus = (q: (typeof questions)[number]) => {
+    const f = q.followUp;
+    let line: string;
+    if (f?.kind === "meeting") line = '<span style="color:#0d9488">Meeting booked</span>';
+    else if (f?.event_id != null) line = hubspotOn ? `HubSpot ticket: ${ticketCell(tickets.get(f.event_id) ?? null, f.created_at)}` : "Emailed support";
+    else line = '<span style="color:#94a3b8">No contact details left</span>';
+    return `<div style="margin-top:4px;font-size:11px;color:#64748b">${line}</div>`;
+  };
   const followShown = followUps.slice(0, 15);
   const questionsBody = (followUps.length === 0
     ? empty(v2Partial ? "Follow-up status is not available for this period." : "No questions needed follow-up in this period.")
     : followShown.map((q) => `
       <div style="border:1px solid #e2e8f0;border-left:3px solid #d97706;border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:12px">
-        <div style="color:#64748b">${esc(fmtDateTime(q.created_at, tz))} · ${esc(instLabel(q.installation_id))} · ${who(q.user_email, q.account)}${q.status === "error" ? " · answer failed" : q.rating === 1 ? " · rated Not helpful" : " · visitor then emailed or booked"}</div>
+        <div style="color:#64748b">${esc(fmtDateTime(q.created_at, tz))} · ${esc(instLabel(q.installation_id))} · ${who(q.user_email, q.account)} · ${followUpReason(q)}</div>
         <div style="margin-top:4px"><strong>Q:</strong> ${esc(truncate(q.question, 500))}</div>
         ${q.answer ? `<div style="margin-top:4px;color:#334155"><strong>A:</strong> ${esc(truncate(q.answer, 400))}</div>` : ""}
+        ${followUpStatus(q)}
       </div>`).join("") + more(followShown.length, followUps.length))
     + `<div style="font-size:12px;color:#64748b;margin-top:6px">All ${questions.length} questions, with full text and the agent's answers, are in the attached CSV.</div>`;
 
@@ -416,17 +490,20 @@ ${section("Knowledge base visits", kbBody)}
 
   // ─── CSV (every record) ───────────────────────────────────────────────────
   const head = ["record_type", "timestamp_local", "timestamp_utc", "installation", "account", "user", "session_id",
-    "title_or_subject", "question", "answer", "rating", "feedback", "status", "url", "meeting_start_local"];
+    "title_or_subject", "question", "answer", "rating", "feedback", "status", "url", "meeting_start_local", "hubspot_ticket_id", "hubspot_ticket_status"];
   const rows: Array<Array<string | number | null>> = [];
   const base = (type: string, ts: number, inst: number | null, account: string | null, user: string | null, session: string | null) =>
     [type, fmtIsoLocal(ts, tz), new Date(ts * 1000).toISOString(), instLabel(inst), account, user, session];
   for (const m of meetings) rows.push([...base("meeting", m.booked_at, m.installation_id, null, m.invitee_email, m.session_id), m.event_name, null, null, null, null, meetingStatus(m, now), null, fmtIsoLocal(m.start_time, tz)]);
   for (const e of kbMenu) rows.push([...base("kb_visit_menu", e.created_at, e.installation_id, e.account, e.user_email, e.session_id), null, null, null, null, null, null, e.source_url, null]);
   for (const c of r.articleClicks) rows.push([...base("kb_visit_article", c.created_at, c.installation_id, c.account, c.user_email, c.session_id), c.article_title, null, null, null, null, null, c.article_url, null]);
-  for (const e of emails) rows.push([...base("email_sent", e.created_at, e.installation_id, e.account, e.visitorEmail, e.session_id), e.subject ?? "Not available", null, null, null, null, null, e.source_url, null]);
+  const csvTicket = (t: WidgetHubspotTicket | null | undefined) => (hubspotOn ? [t?.hubspot_ticket_id ?? null, t?.status ?? "not_checked"] : [null, null]);
+  for (const e of emails) rows.push([...base(e.event_type === "follow_up_request" ? "follow_up_request" : "email_sent", e.created_at, e.installation_id, e.account, e.visitorEmail, e.session_id), e.subject ?? "Not available", null, null, null, null, null, e.source_url, null, ...csvTicket(e.ticket)]);
   for (const x of r.ratings) rows.push([...base("rating", x.created_at, x.installation_id, x.account, x.user_email, x.session_id), null, x.question, x.answer, x.rating, x.feedback, null, null, null]);
-  for (const q of questions) rows.push([...base("question", q.created_at, q.installation_id, q.account, q.user_email, q.session_id), null, q.question, q.answer, q.rating, null, q.outcome, null, null]);
+  for (const q of questions) rows.push([...base("question", q.created_at, q.installation_id, q.account, q.user_email, q.session_id), null, q.question, q.answer, q.rating, null, q.outcome, null, null,
+    ...(q.followUp?.event_id != null ? csvTicket(tickets.get(q.followUp.event_id)) : [null, null])]);
   for (const e of r.events.filter((x) => x.event_type === "calendly_click")) rows.push([...base("scheduling_link_click", e.created_at, e.installation_id, e.account, e.user_email, e.session_id), null, null, null, null, null, null, e.source_url, null]);
+  for (const row of rows) while (row.length < head.length) row.push(null);
   rows.sort((a, b) => String(a[2]).localeCompare(String(b[2])));
   const csv = "﻿" + [head, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
 

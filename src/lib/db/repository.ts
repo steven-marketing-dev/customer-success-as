@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import crypto from "crypto";
-import { getDb, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion, type GmailToken, type WidgetInstallation, type WidgetRating, type WidgetQuestion, type WidgetArticleClick, type ClarityMetric, type WidgetEventType, type WidgetVisitorContext, type WidgetMeeting, type WidgetReportSend } from "./index";
+import { getDb, type WidgetHubspotTicket, type Ticket, type QAPair, type Category, type SyncState, type Term, type KBArticle, type CorrectionLog, type BehavioralCard, type RefDoc, type RefDocSection, type User, type Conversation, type ChatMessage, type MessageRating, type ProcessCard, type TourCompletion, type GmailToken, type WidgetInstallation, type WidgetRating, type WidgetQuestion, type WidgetArticleClick, type ClarityMetric, type WidgetEventType, type WidgetVisitorContext, type WidgetMeeting, type WidgetReportSend } from "./index";
 
 function normalizeQuestion(q: string): string {
   return q.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, " ").trim().slice(0, 200);
@@ -2551,7 +2551,7 @@ export class Repository {
     meetingsBooked: WidgetMeeting[];
     meetingsInPeriod: WidgetMeeting[];
     sessionRatings: Array<{ exchange_id: string; installation_id: number; rating: number }>;
-    sessionFollowUps: Array<{ session_id: string; created_at: number }>;
+    sessionFollowUps: Array<{ event_id: number | null; kind: "email_submit" | "follow_up_request" | "meeting"; session_id: string; created_at: number; exchange_id: string | null }>;
   } {
     const range = [start, end];
     const between = "created_at >= ? AND created_at < ?";
@@ -2559,16 +2559,16 @@ export class Repository {
     const sessions = [...new Set(questions.map((q) => q.session_id).filter((s): s is string => !!s))];
     // Follow-up signals for a question can land after the period ends (e.g. an email sent the next morning),
     // so look up to 24h past the end, restricted to the sessions seen in the period.
-    let sessionFollowUps: Array<{ session_id: string; created_at: number }> = [];
+    let sessionFollowUps: ReturnType<Repository["getWidgetReportRecords"]>["sessionFollowUps"] = [];
     if (sessions.length > 0) {
       const ph = sessions.map(() => "?").join(",");
       sessionFollowUps = this.db.prepare(`
-        SELECT session_id, created_at FROM widget_events
-          WHERE event_type = 'email_submit' AND session_id IN (${ph}) AND created_at >= ? AND created_at < ?
+        SELECT id AS event_id, event_type AS kind, session_id, created_at, json_extract(metadata, '$.exchangeId') AS exchange_id FROM widget_events
+          WHERE event_type IN ('email_submit', 'follow_up_request') AND session_id IN (${ph}) AND created_at >= ? AND created_at < ?
         UNION ALL
-        SELECT session_id, booked_at AS created_at FROM widget_meetings
+        SELECT NULL AS event_id, 'meeting' AS kind, session_id, booked_at AS created_at, NULL AS exchange_id FROM widget_meetings
           WHERE session_id IN (${ph}) AND booked_at >= ? AND booked_at < ?
-      `).all(...sessions, start, end + 86400, ...sessions, start, end + 86400) as Array<{ session_id: string; created_at: number }>;
+      `).all(...sessions, start, end + 86400, ...sessions, start, end + 86400) as ReturnType<Repository["getWidgetReportRecords"]>["sessionFollowUps"];
     }
     return {
       installations: this.db.prepare("SELECT id, name FROM widget_installations ORDER BY id").all() as Array<{ id: number; name: string }>,
@@ -2586,6 +2586,72 @@ export class Repository {
       `).all(...range) as Array<{ exchange_id: string; installation_id: number; rating: number }>,
       sessionFollowUps,
     };
+  }
+
+  /**
+   * Widget emails / follow-up requests whose HubSpot ticket should be looked up or refreshed:
+   * never checked, not found yet (up to 6 tries, hourly) or still open (hourly). Skips events
+   * younger than 5 minutes so HubSpot has time to create the ticket.
+   */
+  listWidgetTicketCandidates(since: number, now = Math.floor(Date.now() / 1000)): Array<{
+    event_id: number; created_at: number; metadata: string | null; ticket: WidgetHubspotTicket | null;
+  }> {
+    const rows = this.db.prepare(`
+      SELECT e.id AS event_id, e.created_at, e.metadata, t.id AS t_id
+      FROM widget_events e LEFT JOIN widget_hubspot_tickets t ON t.event_id = e.id
+      WHERE e.event_type IN ('email_submit', 'follow_up_request') AND e.created_at >= ? AND e.created_at <= ?
+        AND (t.id IS NULL
+          OR (t.status = 'not_found' AND t.attempts < 6 AND t.checked_at <= ?)
+          OR (t.status = 'open' AND t.checked_at <= ?))
+      ORDER BY e.created_at
+    `).all(since, now - 300, now - 3600, now - 3600) as Array<{ event_id: number; created_at: number; metadata: string | null; t_id: number | null }>;
+    const get = this.db.prepare("SELECT * FROM widget_hubspot_tickets WHERE id = ?");
+    return rows.map((r) => ({
+      event_id: r.event_id, created_at: r.created_at, metadata: r.metadata,
+      ticket: r.t_id != null ? get.get(r.t_id) as WidgetHubspotTicket : null,
+    }));
+  }
+
+  /** HubSpot ticket ids already linked to a widget event (a ticket matches at most one event). */
+  listLinkedHubspotTicketIds(): Set<string> {
+    const rows = this.db.prepare("SELECT hubspot_ticket_id FROM widget_hubspot_tickets WHERE hubspot_ticket_id IS NOT NULL").all() as Array<{ hubspot_ticket_id: string }>;
+    return new Set(rows.map((r) => r.hubspot_ticket_id));
+  }
+
+  upsertWidgetHubspotTicket(eventId: number, data: {
+    hubspot_ticket_id: string | null; status: WidgetHubspotTicket["status"]; ticket_created_at: number | null; closed_at: number | null;
+  }): void {
+    this.db.prepare(`
+      INSERT INTO widget_hubspot_tickets (event_id, hubspot_ticket_id, status, ticket_created_at, closed_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(event_id) DO UPDATE SET
+        hubspot_ticket_id = excluded.hubspot_ticket_id, status = excluded.status,
+        ticket_created_at = excluded.ticket_created_at, closed_at = excluded.closed_at,
+        attempts = widget_hubspot_tickets.attempts + 1, checked_at = unixepoch()
+    `).run(eventId, data.hubspot_ticket_id, data.status, data.ticket_created_at, data.closed_at);
+  }
+
+  getWidgetHubspotTickets(eventIds: number[]): Map<number, WidgetHubspotTicket> {
+    if (eventIds.length === 0) return new Map();
+    const rows = this.db.prepare(`SELECT * FROM widget_hubspot_tickets WHERE event_id IN (${eventIds.map(() => "?").join(",")})`).all(...eventIds) as WidgetHubspotTicket[];
+    return new Map(rows.map((r) => [r.event_id, r]));
+  }
+
+  /**
+   * The email a visitor typed in the widget (email form or follow-up request), per session.
+   * Lets the report name every question of a visit, not just the email itself.
+   */
+  getWidgetSessionEmails(sessionIds: string[]): Map<string, string> {
+    const out = new Map<string, string>();
+    if (sessionIds.length === 0) return out;
+    const rows = this.db.prepare(`
+      SELECT session_id, user_email FROM widget_events
+      WHERE event_type IN ('email_submit', 'follow_up_request') AND user_email IS NOT NULL
+        AND session_id IN (${sessionIds.map(() => "?").join(",")})
+      ORDER BY created_at
+    `).all(...sessionIds) as Array<{ session_id: string; user_email: string }>;
+    for (const r of rows) if (!out.has(r.session_id)) out.set(r.session_id, r.user_email);
+    return out;
   }
 
   /** First recorded timestamp per widget source, for the report's "data available since" notes. */

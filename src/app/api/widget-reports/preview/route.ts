@@ -6,6 +6,7 @@ import { buildWidgetUsageReport, trailingPeriod, REPORT_PERIODS } from "@/lib/wi
 import { sendWidgetReport, userReportTimezone } from "@/lib/widget-report-scheduler";
 import { syncWidgetMeetings, isCalendlyConfigured } from "@/lib/widget-meetings";
 import { isReportEmailConfigured } from "@/lib/email/reports";
+import { syncWidgetTickets } from "@/lib/widget-tickets";
 
 /**
  * Master-only preview of the widget usage report for the last N whole days in the caller's
@@ -49,6 +50,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({})) as { days?: number; syncMeetings?: boolean };
   const days = parseDays(body.days);
   const meetingSync = body.syncMeetings && isCalendlyConfigured() ? await syncWidgetMeetings() : null;
+  if (body.syncMeetings) await syncWidgetTickets().catch(() => null);
   try {
     await sendWidgetReport(g.repo, g.user, trailingPeriod(days, userReportTimezone(g.user)), { sentBy: g.user.display_name || g.user.username });
     return NextResponse.json({ ok: true, to: g.user.email, days, meetingSync });

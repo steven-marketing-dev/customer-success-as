@@ -6,12 +6,14 @@ import { customPeriod, trailingPeriod, REPORT_PERIODS } from "@/lib/widget-usage
 import { sendWidgetReport, userReportTimezone } from "@/lib/widget-report-scheduler";
 import { syncWidgetMeetings, isCalendlyConfigured } from "@/lib/widget-meetings";
 import { isReportEmailConfigured } from "@/lib/email/reports";
+import { syncWidgetTickets } from "@/lib/widget-tickets";
 
 const MAX_RECIPIENTS = 25;
 
 /**
  * Master-only "Send report now": emails the widget usage report to the chosen users right away,
- * for the last 7/30/90 days or for custom dates, each in the recipient's timezone.
+ * for the last 7/30/90 days or for custom dates, each in the recipient's timezone. Syncs Calendly
+ * meetings and HubSpot ticket status first so the report is current.
  * Body: { userIds: number[], days?: 7|30|90, from?: "YYYY-MM-DD", to?: "YYYY-MM-DD" }.
  * Never touches widget_report_sends, so the scheduled reports still go out as usual.
  */
@@ -53,6 +55,7 @@ export async function POST(req: NextRequest) {
   }
 
   const meetingSync = isCalendlyConfigured() ? await syncWidgetMeetings().catch(() => null) : null;
+  await syncWidgetTickets().catch(() => null);
   const sentBy = sender?.display_name || sender?.username || "an admin";
   const results: Array<{ userId: number; to: string; ok: boolean; error?: string }> = [];
   for (const { user } of users) {
