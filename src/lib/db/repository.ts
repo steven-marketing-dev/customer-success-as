@@ -2599,7 +2599,8 @@ export class Repository {
 
   /**
    * Widget emails / follow-up requests whose HubSpot ticket should be looked up or refreshed:
-   * never checked, not found yet (up to 6 tries, hourly) or still open (hourly). Skips events
+   * never checked, not found yet (up to 6 tries, hourly), still open (hourly) or linked before the
+   * subject was stored (once). Skips events
    * younger than 5 minutes so HubSpot has time to create the ticket.
    */
   listWidgetTicketCandidates(since: number, now = Math.floor(Date.now() / 1000)): Array<{
@@ -2611,7 +2612,8 @@ export class Repository {
       WHERE e.event_type IN ('email_submit', 'follow_up_request') AND e.created_at >= ? AND e.created_at <= ?
         AND (t.id IS NULL
           OR (t.status = 'not_found' AND t.attempts < 6 AND t.checked_at <= ?)
-          OR (t.status = 'open' AND t.checked_at <= ?))
+          OR (t.status = 'open' AND t.checked_at <= ?)
+          OR (t.hubspot_ticket_id IS NOT NULL AND t.subject IS NULL))
       ORDER BY e.created_at
     `).all(since, now - 300, now - 3600, now - 3600) as Array<{ event_id: number; created_at: number; metadata: string | null; session_id: string | null; t_id: number | null }>;
     const get = this.db.prepare("SELECT * FROM widget_hubspot_tickets WHERE id = ?");
@@ -2629,15 +2631,18 @@ export class Repository {
 
   upsertWidgetHubspotTicket(eventId: number, data: {
     hubspot_ticket_id: string | null; status: WidgetHubspotTicket["status"]; ticket_created_at: number | null; closed_at: number | null;
+    subject?: string | null; visitor_email?: string | null;
   }): void {
     this.db.prepare(`
-      INSERT INTO widget_hubspot_tickets (event_id, hubspot_ticket_id, status, ticket_created_at, closed_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO widget_hubspot_tickets (event_id, hubspot_ticket_id, status, ticket_created_at, closed_at, subject, visitor_email)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(event_id) DO UPDATE SET
         hubspot_ticket_id = excluded.hubspot_ticket_id, status = excluded.status,
         ticket_created_at = excluded.ticket_created_at, closed_at = excluded.closed_at,
+        subject = COALESCE(excluded.subject, widget_hubspot_tickets.subject),
+        visitor_email = COALESCE(excluded.visitor_email, widget_hubspot_tickets.visitor_email),
         attempts = widget_hubspot_tickets.attempts + 1, checked_at = unixepoch()
-    `).run(eventId, data.hubspot_ticket_id, data.status, data.ticket_created_at, data.closed_at);
+    `).run(eventId, data.hubspot_ticket_id, data.status, data.ticket_created_at, data.closed_at, data.subject ?? null, data.visitor_email ?? null);
   }
 
   getWidgetHubspotTickets(eventIds: number[]): Map<number, WidgetHubspotTicket> {

@@ -353,6 +353,9 @@ export interface WidgetHubspotTicket {
   status: "open" | "closed" | "not_found";
   ticket_created_at: number | null;
   closed_at: number | null;
+  /** Subject the visitor typed (from the ticket's incoming email, else the ticket's own subject); "" when none */
+  subject: string | null;
+  visitor_email: string | null;
   attempts: number;
   checked_at: number;
 }
@@ -810,6 +813,8 @@ function initDb(db: Database.Database) {
     "ALTER TABLE users ADD COLUMN report_30d INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE users ADD COLUMN report_90d INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE widget_questions ADD COLUMN status TEXT NOT NULL DEFAULT 'ok'",
+    "ALTER TABLE widget_hubspot_tickets ADD COLUMN subject TEXT",
+    "ALTER TABLE widget_hubspot_tickets ADD COLUMN visitor_email TEXT",
     ...["widget_questions", "widget_ratings", "widget_events", "widget_article_clicks"].flatMap((t) => [
       `ALTER TABLE ${t} ADD COLUMN session_id TEXT`,
       `ALTER TABLE ${t} ADD COLUMN user_email TEXT`,
