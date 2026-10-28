@@ -426,19 +426,6 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     : t.status === "closed" ? `Closed after ${fmtDuration((t.closed_at ?? now) - sentAt)}`
     : t.status === "open" ? `Open for ${fmtDuration(now - sentAt)}`
     : "No ticket found";
-  const ticketCell = (t: WidgetHubspotTicket | null, sentAt: number) => {
-    const text = esc(ticketText(t, sentAt));
-    const url = t?.hubspot_ticket_id ? hubspotTicketUrl(t.hubspot_ticket_id) : null;
-    const color = t?.status === "closed" ? C.teal700 : t?.status === "open" ? C.orangeEdge : C.tealMuted;
-    return url ? `<a href="${esc(url)}" style="color:${color}">${text}</a>` : `<span style="color:${color}">${text}</span>`;
-  };
-
-  const emailShown = emails.slice(0, 25);
-  const emailsBody = emails.length === 0 ? empty("Nobody emailed support from the widget.")
-    : table(["Sent", "Subject", "Who", ...(hubspotOn ? ["HubSpot ticket"] : [])], emailShown.map((e) => [
-      td(esc(fmtDateTime(e.created_at, tz))), td(e.subject ? esc(truncate(e.subject, 120)) : na), td(who(e.visitorEmail, e.account)),
-      ...(hubspotOn ? [td(ticketCell(e.ticket, e.created_at))] : []),
-    ])) + more(emailShown.length, emails.length);
 
   const ratingsShown = r.ratings.slice(0, 25);
   const ratingsBody = r.ratings.length === 0 ? empty("Nobody rated an answer.")
@@ -456,36 +443,56 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     ])) + more(kbShown.length, kbVisitRows.length);
 
   const followUps = questions.filter((q) => q.outcome === "follow_up");
-  const followUpReasons = (q: (typeof questions)[number]) => {
-    const kind = q.followUp?.kind;
-    return [
-      q.status === "error" ? chip("Answer didn't load", "coral") : "",
-      q.status === "unanswered" ? chip("Agent didn't know", "coral") : "",
-      q.rating === 1 ? chip("Marked Not helpful", "orange") : "",
-      kind === "follow_up_request" ? chip("Asked us to reach out", "orange") : kind === "email_submit" ? chip("Emailed support", "teal") : kind === "meeting" ? chip("Booked a call", "teal") : "",
-    ].join("");
+  // Emails to support as cards, so you can see how fast the team answered each one. The question
+  // that led to an email is the last one asked before it in the same visit.
+  const questionOfEmail = new Map<number, (typeof questions)[number]>();
+  for (const q of questions) if (q.followUp?.event_id != null) questionOfEmail.set(q.followUp.event_id, q);
+  const closedTimes = emails.filter((e) => e.ticket?.status === "closed" && e.ticket.closed_at).map((e) => e.ticket!.closed_at! - e.created_at).sort((x, y) => x - y);
+  const medianClose = closedTimes.length ? closedTimes[Math.floor((closedTimes.length - 1) / 2)] : null;
+  const ticketPill = (t: WidgetHubspotTicket | null, sentAt: number) => {
+    const text = esc(ticketText(t, sentAt));
+    const [bg, border, fg] = t?.status === "closed" ? [C.tealPale, C.tealPale, C.teal900] : t?.status === "open" ? ["#ffffff", C.orange, C.ink] : [C.ice, C.ice, C.slate];
+    const pill = `<span style="display:inline-block;background:${bg};border:1px solid ${border};color:${fg};font-size:12px;font-weight:600;border-radius:100px;padding:4px 14px;white-space:nowrap">${text}</span>`;
+    const url = t?.hubspot_ticket_id ? hubspotTicketUrl(t.hubspot_ticket_id) : null;
+    return url ? `<a href="${esc(url)}" style="text-decoration:none">${pill}</a>` : pill;
   };
-  // Whether anyone picked it up: the HubSpot ticket of the email that followed, if any
-  const followUpStatus = (q: (typeof questions)[number]) => {
-    const f = q.followUp;
-    let line: string;
-    if (f?.kind === "meeting") line = `<span style="color:${C.teal700};font-weight:600">They booked a call</span>`;
-    else if (f?.event_id != null) line = hubspotOn ? `Their HubSpot ticket: <strong>${ticketCell(tickets.get(f.event_id) ?? null, f.created_at)}</strong>` : "They emailed support";
-    else line = `<span style="color:${C.slate}">They didn't leave an email, so we can't reach them. Worth adding the answer to the knowledge base.</span>`;
-    return `<div style="margin-top:10px;font-size:12px;color:${C.slate}">${line}</div>`;
-  };
-  const followShown = followUps.slice(0, 15);
-  const questionsBody = (followUps.length === 0
-    ? empty("Nothing to follow up on. Every question got an answer.")
-    : followShown.map((q) => `
+  const emailShown = emails.slice(0, 15);
+  const emailsHint = emails.length === 0 ? ""
+    : hubspotOn ? [
+      `${ticketCount("closed")} of ${emails.length} closed${medianClose != null ? `, usually within ${fmtDuration(medianClose)}` : ""}`,
+      ticketCount("open") ? `${ticketCount("open")} still open` : "",
+    ].filter(Boolean).join(" · ") + "."
+    : "";
+  const emailsBody = emails.length === 0 ? empty("Nobody emailed support from the widget.")
+    : emailShown.map((e) => {
+      const q = questionOfEmail.get(e.id);
+      const title = e.subject ? e.subject.replace(/^Follow-up request:\s*/i, "") : q?.question ?? null;
+      return `
       <div style="border:1px solid ${C.line};border-radius:18px;padding:16px 18px;margin-bottom:12px;font-size:13px;background:#ffffff;box-shadow:${CARD_SHADOW}">
-        <div>${followUpReasons(q)}</div>
-        <div style="color:${C.slate};font-size:12px;margin-top:2px">${esc(fmtDateTime(q.created_at, tz))} · ${esc(instLabel(q.installation_id))} · ${who(q.user_email, q.account)}</div>
-        <div style="margin-top:8px;color:${C.ink};font-weight:600;font-size:14px">${esc(truncate(q.question, 500))}</div>
-        ${q.answer ? `<div style="margin-top:8px;color:${C.body};font-size:12px;background:${C.mist};border-radius:12px;padding:10px 14px"><span style="color:${C.teal700};font-weight:600">Agent's answer:</span> ${esc(truncate(q.answer, 400))}</div>` : ""}
-        ${followUpStatus(q)}
-      </div>`).join("") + more(followShown.length, followUps.length))
-    + `<div style="font-size:12px;color:${C.slate};margin-top:6px">All ${questions.length} questions and the agent's answers are in the attached spreadsheet.</div>`;
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+          <td valign="top">${e.event_type === "follow_up_request" ? chip("Asked us to reach out", "orange") : chip("Emailed support", "teal")}${q?.status === "unanswered" ? chip("Agent didn't know", "coral") : ""}</td>
+          ${hubspotOn ? `<td align="right" valign="top">${ticketPill(e.ticket, e.created_at)}</td>` : ""}
+        </tr></table>
+        <div style="color:${C.slate};font-size:12px;margin-top:2px">${esc(fmtDateTime(e.created_at, tz))} · ${esc(instLabel(e.installation_id))} · ${who(e.visitorEmail, e.account)}</div>
+        <div style="margin-top:8px;color:${C.ink};font-weight:600;font-size:14px">${title ? esc(truncate(title, 300)) : `<span style="color:${C.slate};font-weight:400">Subject not tracked yet</span>`}</div>
+        ${q?.answer ? `<div style="margin-top:8px;color:${C.body};font-size:12px;background:${C.mist};border-radius:12px;padding:10px 14px"><span style="color:${C.teal700};font-weight:600">What the agent told them first:</span> ${esc(truncate(q.answer, 300))}</div>` : ""}
+      </div>`;
+    }).join("") + more(emailShown.length, emails.length);
+
+  // Questions nobody emailed about: what the knowledge base is missing
+  const gapReason = (q: (typeof questions)[number]) => [
+    q.status === "unanswered" ? "Agent didn't know" : "",
+    q.status === "error" ? "Answer didn't load" : "",
+    q.rating === 1 ? "Marked Not helpful" : "",
+    q.followUp?.kind === "meeting" ? "Booked a call" : "",
+  ].filter(Boolean).join(", ");
+  const gaps = followUps.filter((q) => q.followUp?.kind !== "email_submit" && q.followUp?.kind !== "follow_up_request");
+  const gapsShown = gaps.slice(0, 25);
+  const gapsBody = (gaps.length === 0 ? empty("Nothing here. The agent had an answer for everyone else.")
+    : table(["When", "Question", "Why", "Who"], gapsShown.map((q) => [
+      td(esc(fmtDateTime(q.created_at, tz))), td(`<span style="color:${C.ink}">${esc(truncate(q.question, 180))}</span>`), td(esc(gapReason(q))), td(who(q.user_email, q.account)),
+    ])) + more(gapsShown.length, gaps.length))
+    + `<div style="font-size:12px;color:${C.slate};margin-top:8px">All ${questions.length} questions and the agent's answers are in the attached spreadsheet.</div>`;
 
   const label = days === 7 ? "7-day" : days === 30 ? "30-day" : `${days}-day`;
   // Stat band like the home page's "Proven impact" band: deep teal gradient, white numbers
@@ -516,14 +523,14 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
 </td></tr>
 <tr><td style="height:28px;font-size:0;line-height:0">&nbsp;</td></tr>
 ${kpis}
-${section("Questions to follow up on", questionsBody, "These people didn't get what they needed from the agent. Make sure someone got back to them, or add the missing answer to the knowledge base.")}
+${section("Emails to support", emailsBody, emailsHint)}
+${section("Questions the agent couldn't answer", gapsBody, "Nobody emailed about these. Add the missing answers to the knowledge base so the agent can handle them next time.")}
 ${section("The numbers", table(["", "Total", "Details"], summaryRows, [1]), r.installations.length > 1 ? `For all ${r.installations.length} sites with the widget.` : "")}
 ${r.installations.length > 1 ? section("By site", table(["Site", "Calls", "KB visits", "Emails", "Ratings", "Questions"], perInstall, [1, 2, 3, 4, 5])) : ""}
 ${section(`Questions ${byUnitTitle}`, questionsByDay)}
 ${section(`Meetings ${byUnitTitle}`, meetingsByDay)}
 ${section("Calls booked", meetingsBody)}
 ${section("Ratings", ratingsBody)}
-${section("Emails to support", emailsBody)}
 ${section("Knowledge base visits", kbBody)}
 <tr><td style="padding:30px 36px 34px">
   <div style="background:${C.ice};border-radius:18px;padding:18px 22px">
