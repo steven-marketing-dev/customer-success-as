@@ -836,6 +836,11 @@ function initDb(db: Database.Database) {
       .run(String(Math.floor(Date.now() / 1000)));
   } catch { /* table may not exist yet */ }
 
+  // Visitor emails read from HubSpot before the parser dropped mail clients' "<mailto:...>" suffix
+  try {
+    db.exec("UPDATE widget_hubspot_tickets SET visitor_email = substr(visitor_email, 1, instr(visitor_email, '<') - 1) WHERE instr(visitor_email, '<') > 1");
+  } catch { /* table may not exist yet */ }
+
   // Mark past widget answers where the agent had no documented guidance (DIS-234). Once.
   try {
     if (!db.prepare("SELECT 1 FROM app_meta WHERE key = 'widget_gap_backfill'").get()) {

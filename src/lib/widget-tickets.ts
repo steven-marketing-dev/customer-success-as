@@ -114,7 +114,8 @@ async function widgetFooterOf(ticketId: string): Promise<WidgetFooter | null> {
     if (e.properties.hs_email_direction !== "INCOMING_EMAIL" || !text.includes("Submitted via the help widget")) continue;
     return {
       sessionId: /Widget session: ([A-Za-z0-9-]{8,64})/.exec(text)?.[1] ?? null,
-      visitorEmail: /Visitor email: (\S+@\S+)/.exec(text)?.[1]?.toLowerCase() ?? null,
+      // Mail clients turn the address into "x@y.com<mailto:x@y.com>": keep the address only
+      visitorEmail: /Visitor email:\s*<?([A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/.exec(text)?.[1]?.toLowerCase() ?? null,
       subject: e.properties.hs_email_subject?.trim() || null,
     };
   }
