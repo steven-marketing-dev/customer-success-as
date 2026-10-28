@@ -14,7 +14,8 @@ import { Repository } from "@/lib/db/repository";
 import { getDb, type User } from "@/lib/db/index";
 import { syncWidgetMeetings, isCalendlyConfigured } from "@/lib/widget-meetings";
 import {
-  REPORT_PERIODS, DEFAULT_REPORT_TIMEZONE, buildWidgetUsageReport, latestCompletedPeriod, isValidTimezone, type ReportPeriod,
+  REPORT_PERIODS, DEFAULT_REPORT_TIMEZONE, buildWidgetUsageReport, latestCompletedPeriod, isValidTimezone,
+  type ReportPeriod, type ReportOptions,
 } from "@/lib/widget-usage-report";
 import { sendReportEmail, isReportEmailConfigured } from "@/lib/email/reports";
 
@@ -34,9 +35,9 @@ function enabledPeriods(user: User): number[] {
 }
 
 /** Build one user's report for `period` and email it to their address. */
-export async function sendWidgetReport(repo: Repository, user: User, period: ReportPeriod): Promise<void> {
+export async function sendWidgetReport(repo: Repository, user: User, period: ReportPeriod, opts: ReportOptions = {}): Promise<void> {
   if (!user.email) throw new Error(`User ${user.id} has no email`);
-  const report = buildWidgetUsageReport(repo, period);
+  const report = buildWidgetUsageReport(repo, period, opts);
   await sendReportEmail({
     to: user.email,
     subject: report.subject,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { LayoutDashboard, BookOpen, Zap, RefreshCw, Trash2, MessageCircle, BookA, LogOut, UserPlus, Users, X, ChevronDown, Star, ClipboardList, AlertCircle, Sparkles, Settings, Mail, Link2, Paperclip, Code2 } from "lucide-react";
+import { LayoutDashboard, BookOpen, Zap, RefreshCw, Trash2, MessageCircle, BookA, LogOut, UserPlus, Users, X, ChevronDown, Star, ClipboardList, AlertCircle, Sparkles, Settings, Mail, Link2, Paperclip, Code2, Send } from "lucide-react";
 import { CategoryGrid, type CategorySummary } from "@/components/CategoryGrid";
 import { InsightsDashboard } from "@/components/InsightsDashboard";
 import { SearchPanel } from "@/components/SearchPanel";
@@ -67,6 +67,13 @@ export default function Home() {
   const [editingReportsFor, setEditingReportsFor] = useState<number | null>(null);
   const [userReportDraft, setUserReportDraft] = useState<{ email: string } & ReportToggles>({ email: "", report_7d: false, report_30d: false, report_90d: false });
   const [userReportError, setUserReportError] = useState<string | null>(null);
+  const [showSendNow, setShowSendNow] = useState(false);
+  const [sendNowRange, setSendNowRange] = useState<"7" | "30" | "90" | "custom">("7");
+  const [sendNowFrom, setSendNowFrom] = useState("");
+  const [sendNowTo, setSendNowTo] = useState("");
+  const [sendNowIds, setSendNowIds] = useState<number[]>([]);
+  const [sendNowStatus, setSendNowStatus] = useState<string | null>(null);
+  const [sendNowBusy, setSendNowBusy] = useState(false);
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
@@ -266,6 +273,38 @@ export default function Home() {
       setPreviewStatus(res.ok ? `Sent the ${days}-day preview to ${data.to}` : data.error || "Failed to send");
     } catch {
       setPreviewStatus("Network error");
+    }
+  };
+
+  const openSendNow = () => {
+    setShowSendNow((v) => !v);
+    setSendNowStatus(null);
+    setSendNowIds(managedUsers.filter((u) => u.email && (u.report_7d || u.report_30d || u.report_90d)).map((u) => u.id));
+  };
+
+  const sendReportNow = async () => {
+    setSendNowBusy(true);
+    setSendNowStatus("Sending…");
+    try {
+      const period = sendNowRange === "custom" ? { from: sendNowFrom, to: sendNowTo } : { days: Number(sendNowRange) };
+      const res = await fetch("/api/widget-reports/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userIds: sendNowIds, ...period }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!data.results) {
+        setSendNowStatus(data.error || "Failed to send");
+      } else {
+        const results = data.results as Array<{ to: string; ok: boolean; error?: string }>;
+        const sent = results.filter((r) => r.ok).map((r) => r.to);
+        const failed = results.filter((r) => !r.ok).map((r) => `${r.to} (${r.error})`);
+        setSendNowStatus([sent.length && `Sent to ${sent.join(", ")}`, failed.length && `Failed: ${failed.join("; ")}`].filter(Boolean).join(". "));
+      }
+    } catch {
+      setSendNowStatus("Network error");
+    } finally {
+      setSendNowBusy(false);
     }
   };
 
@@ -645,7 +684,7 @@ export default function Home() {
       {/* User Management Modal */}
       {showUserMgmt && (
         <div className="fixed inset-0 glass-overlay flex items-center justify-center z-50" onClick={() => setShowUserMgmt(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold text-slate-900">Manage Users</h2>
               <button onClick={() => setShowUserMgmt(false)} className="p-1 text-slate-400 hover:text-slate-600"><X size={18} /></button>
@@ -706,6 +745,60 @@ export default function Home() {
                 )}
                 </div>
               ))}
+            </div>
+
+            <div className="border border-slate-200 rounded-lg p-3 space-y-2" data-tour="send-report-now">
+              <button onClick={openSendNow} className="w-full flex items-center justify-between text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                <span className="flex items-center gap-1.5"><Send size={12} />Send report now</span>
+                <span className="text-[10px] font-normal normal-case text-slate-400">{showSendNow ? "Hide" : "Outside the schedule"}</span>
+              </button>
+              {showSendNow && (
+                <>
+                  <select
+                    value={sendNowRange}
+                    onChange={(e) => setSendNowRange(e.target.value as typeof sendNowRange)}
+                    className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-mint-500"
+                  >
+                    <option value="7">Last 7 days</option>
+                    <option value="30">Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                    <option value="custom">Custom dates</option>
+                  </select>
+                  {sendNowRange === "custom" && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-[11px] text-slate-500">From
+                        <input type="date" value={sendNowFrom} onChange={(e) => setSendNowFrom(e.target.value)} className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-mint-500" />
+                      </label>
+                      <label className="text-[11px] text-slate-500">To
+                        <input type="date" value={sendNowTo} onChange={(e) => setSendNowTo(e.target.value)} className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-mint-500" />
+                      </label>
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    {managedUsers.map((u) => (
+                      <label key={u.id} className={`flex items-center gap-1.5 text-[11px] ${u.email ? "text-slate-600" : "text-slate-300"}`} title={u.email ? undefined : "Set a report email first"}>
+                        <input
+                          type="checkbox"
+                          disabled={!u.email}
+                          checked={sendNowIds.includes(u.id)}
+                          onChange={(e) => setSendNowIds((ids) => e.target.checked ? [...ids, u.id] : ids.filter((id) => id !== u.id))}
+                        />
+                        {u.display_name || u.username}
+                        <span className="text-slate-400">{u.email ?? "no report email"}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-slate-400">Dates are in each recipient&apos;s timezone. The scheduled reports still go out as usual.</p>
+                  <button
+                    onClick={sendReportNow}
+                    disabled={sendNowBusy || sendNowIds.length === 0 || (sendNowRange === "custom" && (!sendNowFrom || !sendNowTo))}
+                    className="w-full rounded-lg bg-mint-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-mint-700 disabled:opacity-50"
+                  >
+                    {sendNowBusy ? "Sending…" : `Send to ${sendNowIds.length} ${sendNowIds.length === 1 ? "person" : "people"}`}
+                  </button>
+                  {sendNowStatus && <p className="text-[11px] text-slate-600">{sendNowStatus}</p>}
+                </>
+              )}
             </div>
           </div>
         </div>

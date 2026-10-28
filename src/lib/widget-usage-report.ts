@@ -92,6 +92,50 @@ export function trailingPeriod(days: number, tz: string, nowMs = Date.now()): Re
   return { days, start: localMidnight(addDays(today, -days), tz), end: localMidnight(today, tz), timezone: tz };
 }
 
+export const MAX_CUSTOM_PERIOD_DAYS = 92;
+
+/**
+ * Local calendar days `from`..`to` (YYYY-MM-DD, both inclusive) in `tz`, for on-demand reports.
+ * Returns an error string when the range is invalid, in the future or longer than 92 days.
+ */
+export function customPeriod(from: string, to: string, tz: string, nowMs = Date.now()): ReportPeriod | string {
+  const parse = (v: string): LocalDate | null => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    if (!m) return null;
+    const date = { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
+    const check = addDays(date, 0);
+    return check.y === date.y && check.m === date.m && check.d === date.d ? date : null;
+  };
+  const a = parse(from);
+  const b = parse(to);
+  if (!a || !b) return "Dates must be valid YYYY-MM-DD";
+  const days = daysBetween(a, b) + 1;
+  if (days < 1) return "The start date must be on or before the end date";
+  if (days > MAX_CUSTOM_PERIOD_DAYS) return `The period can be at most ${MAX_CUSTOM_PERIOD_DAYS} days`;
+  if (daysBetween(localDateOf(nowMs, tz), b) > 0) return "The end date can't be in the future";
+  return { days, start: localMidnight(a, tz), end: localMidnight(addDays(b, 1), tz), timezone: tz };
+}
+
+/** Columns for the "by day" tables: one per day for 7-day reports, per week for 30, per 15 days for 90. */
+interface Bucket { start: number; end: number; label: string }
+
+function periodBuckets(period: ReportPeriod): { unit: string; buckets: Bucket[] } {
+  const { start, end, days, timezone: tz } = period;
+  const size = days <= 7 ? 1 : days <= 31 ? 7 : 15;
+  const first = localDateOf(start * 1000, tz);
+  const md = (t: number) => new Date(t * 1000).toLocaleDateString("en-US", { timeZone: tz, month: "short", day: "numeric" });
+  const buckets: Bucket[] = [];
+  for (let i = 0; i < days; i += size) {
+    const bStart = localMidnight(addDays(first, i), tz);
+    const bEnd = Math.min(localMidnight(addDays(first, Math.min(i + size, days)), tz), end);
+    const label = size === 1
+      ? new Date(bStart * 1000).toLocaleDateString("en-US", { timeZone: tz, weekday: "short", day: "numeric" }).replace(/^(\d+)\s+(\w+)$/, "$2 $1")
+      : `${md(bStart)} – ${md(bEnd - 60)}`;
+    buckets.push({ start: bStart, end: bEnd, label });
+  }
+  return { unit: size === 1 ? "day" : size === 7 ? "week" : "15 days", buckets };
+}
+
 // ─── Formatting ─────────────────────────────────────────────────────────────
 
 function fmtDateTime(ts: number, tz: string): string {
@@ -147,7 +191,12 @@ export interface WidgetUsageReport {
   summary: Record<string, number | null>;
 }
 
-export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod): WidgetUsageReport {
+export interface ReportOptions {
+  /** Set for reports sent by hand (preview or "Send report now"): replaces the subscription footer. */
+  sentBy?: string;
+}
+
+export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, opts: ReportOptions = {}): WidgetUsageReport {
   const { start, end, timezone: tz, days } = period;
   const r = repo.getWidgetReportRecords(start, end);
   const since = repo.getWidgetDataSince();
@@ -276,6 +325,23 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod): 
       td(String(n(emails)), { right: true }), td(String(n(r.ratings)), { right: true }), td(String(n(questions)), { right: true })];
   });
 
+  // "By day" tables (one column per day / week / 15 days, depending on the report length)
+  const { unit, buckets } = periodBuckets(period);
+  const perBucket = (times: number[]) => buckets.map((b) => times.filter((t) => t >= b.start && t < b.end).length);
+  const byDayTable = (rows: Array<[string, Array<number | string>]>) =>
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;border-collapse:collapse">
+      <tr style="background:#f1f5f9">${th("")}${buckets.map((b) => th(esc(b.label))).join("")}</tr>
+      ${rows.map(([name, vals]) => `<tr>${td(`<span style="color:#475569">${name}</span>`)}${vals.map((v) => td(String(v))).join("")}</tr>`).join("")}
+    </table>`;
+  const byUnitTitle = unit === "15 days" ? "per 15 days" : `by ${unit}`;
+  const questionsByDay = byDayTable([["Questions", perBucket(questions.map((q) => q.created_at))]]);
+  const notAvail = buckets.map(() => "—");
+  const meetingsByDay = byDayTable([
+    ["Booked", meetingsAvailable ? perBucket(r.meetingsBooked.map((m) => m.booked_at)) : notAvail],
+    ["Held", meetingsAvailable ? perBucket(r.meetingsInPeriod.filter((m) => meetingStatus(m, now) === "held").map((m) => m.start_time)) : notAvail],
+    ["Scheduling link clicks", perBucket(r.events.filter((e) => e.event_type === "calendly_click").map((e) => e.created_at))],
+  ]);
+
   const meetingsBody = !meetingsAvailable
     ? empty(calendlyOn ? `Not available before ${esc(v2Label)}.` : "Not available — Calendly is not connected yet.")
     : meetings.length === 0 ? empty("No meetings booked through the widget in this period.")
@@ -331,6 +397,8 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod): 
 </td></tr>
 ${section("Summary", table(["Metric", "Value", "Note"], summaryRows, [1]))}
 ${r.installations.length > 1 ? section("By installation", table(["Installation", "Meetings", "KB visits", "Emails", "Ratings", "Questions"], perInstall, [1, 2, 3, 4, 5])) : ""}
+${section(`Questions ${byUnitTitle}`, questionsByDay)}
+${section(`Meetings ${byUnitTitle}`, meetingsByDay)}
 ${section("Meetings", meetingsBody)}
 ${section("Questions needing follow-up", questionsBody)}
 ${section("Ratings", ratingsBody)}
@@ -339,7 +407,9 @@ ${section("Knowledge base visits", kbBody)}
 <tr><td style="padding:16px 28px 24px">
   <h2 style="font-size:13px;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid #e2e8f0;padding-bottom:4px;margin:0 0 10px">Data availability</h2>
   <ul style="font-size:12px;color:#475569;margin:0;padding-left:18px">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>
-  <div style="font-size:11px;color:#94a3b8;margin-top:14px">You receive this because the ${label} report is on in your profile (My Profile → Email reports).</div>
+  <div style="font-size:11px;color:#94a3b8;margin-top:14px">${opts.sentBy
+    ? `Sent on demand by ${esc(opts.sentBy)}. It is not part of the scheduled reports.`
+    : `You receive this because the ${label} report is on in your profile (My Profile → Email reports).`}</div>
 </td></tr>
 </table>
 </body></html>`;
