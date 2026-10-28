@@ -15,7 +15,7 @@ import VideoGuidesPanel from "@/components/VideoGuidesPanel";
 import { type QAItem } from "@/components/QACard";
 import { WidgetInstallationsPanel } from "@/components/WidgetInstallationsPanel";
 import TourEngine, { type TourDefinition } from "@/components/TourEngine";
-import { createEmailReportsTour } from "@/lib/tours";
+import { createEmailReportsTour, createWidgetGapsTour } from "@/lib/tours";
 
 const REPORT_TIMEZONES = [
   "America/Los_Angeles", "America/Denver", "America/Phoenix", "America/Chicago",
@@ -139,6 +139,20 @@ export default function Home() {
     const t = setTimeout(() => setActiveTour(createEmailReportsTour({ openProfile: () => openProfileSettings(user) })), 1500);
     return () => clearTimeout(t);
   }, [user, toursLoaded, completedTours, activeTour, showWhatsNew, openProfileSettings]);
+
+  // Widget gap queue tour (DIS-234): once per user, after the email reports tour
+  useEffect(() => {
+    if (!user || !toursLoaded || activeTour || showWhatsNew) return;
+    if (!completedTours.includes("email-reports-v1") || completedTours.includes("widget-gaps-v1")) return;
+    const t = setTimeout(() => setActiveTour(createWidgetGapsTour({ openDashboard: () => setTab("dashboard") })), 1500);
+    return () => clearTimeout(t);
+  }, [user, toursLoaded, completedTours, activeTour, showWhatsNew]);
+
+  // Deep link from the usage report email: /?tab=dashboard
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t && tabs.some((x) => x.id === t)) setTab(t as Tab);
+  }, []);
 
   const finishTour = () => {
     if (!activeTour) return;
