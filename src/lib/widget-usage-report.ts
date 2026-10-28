@@ -11,6 +11,15 @@ import type { WidgetMeeting, WidgetHubspotTicket } from "@/lib/db/index";
 import { isCalendlyConfigured, meetingStatus } from "@/lib/widget-meetings";
 import { isHubspotTicketSyncConfigured, hubspotTicketUrl } from "@/lib/widget-tickets";
 
+// Discovered brand (discovered.ai and the app's mint palette), inline for email clients
+const LOGO_URL = "https://discovered.ai/wp-content/uploads/2025/02/Discovered-Logo.png";
+const C = {
+  teal: "#233437", tealDark: "#4a5759", ink: "#233437", body: "#3b4a4c", muted: "#5b6b6e", faint: "#9aa8aa",
+  mint: "#33b29c", mintDark: "#1f8a77", mintLight: "#99e0d1", mintWash: "#e8f6f3",
+  coral: "#d9534a", coralWash: "#fef2f1", amber: "#b7791f", amberWash: "#fef9ec",
+  wash: "#f2f8f8", line: "#e3eced", page: "#eef4f4",
+};
+
 export const REPORT_PERIODS = [7, 30, 90] as const;
 export type ReportPeriodDays = (typeof REPORT_PERIODS)[number];
 export const DEFAULT_REPORT_TIMEZONE = "America/Los_Angeles";
@@ -340,20 +349,26 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
 
   // ─── HTML ─────────────────────────────────────────────────────────────────
   const periodEndInclusive = end - 60;
-  const header = `<strong>Start:</strong> ${esc(fmtDateTime(start, tz))} &nbsp;·&nbsp; <strong>End:</strong> ${esc(fmtDateTime(periodEndInclusive, tz))} &nbsp;·&nbsp; <strong>Timezone:</strong> ${esc(tz)} (${esc(tzShortName(start, tz))})`;
+  const header = `${esc(fmtDateTime(start, tz))} &nbsp;→&nbsp; ${esc(fmtDateTime(periodEndInclusive, tz))} &nbsp;·&nbsp; ${esc(tz)} (${esc(tzShortName(start, tz))})`;
   const td = (v: string, opts: { right?: boolean; muted?: boolean } = {}) =>
-    `<td${opts.right ? ' align="right"' : ""} style="padding:5px 8px;border-bottom:1px solid #f1f5f9;vertical-align:top${opts.muted ? ";color:#64748b" : ""}">${v}</td>`;
-  const th = (v: string, right = false) => `<th align="${right ? "right" : "left"}" style="padding:5px 8px;font-size:11px;color:#475569">${v}</th>`;
+    `<td${opts.right ? ' align="right"' : ""} style="padding:7px 10px;border-bottom:1px solid ${C.line};vertical-align:top${opts.right ? ";white-space:nowrap" : ""}${opts.muted ? `;color:${C.muted}` : ""}">${v}</td>`;
+  const th = (v: string, right = false) => `<th align="${right ? "right" : "left"}" style="padding:7px 10px;font-size:11px;font-weight:600;color:${C.tealDark};text-transform:uppercase;letter-spacing:.04em">${v}</th>`;
   const table = (head: string[], rows: string[][], rightCols: number[] = []) =>
-    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;border-collapse:collapse">
-      <tr style="background:#f1f5f9">${head.map((h, i) => th(h, rightCols.includes(i))).join("")}</tr>
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;border-collapse:collapse;border:1px solid ${C.line};border-radius:8px">
+      <tr style="background:${C.wash}">${head.map((h, i) => th(h, rightCols.includes(i))).join("")}</tr>
       ${rows.map((row) => `<tr>${row.join("")}</tr>`).join("")}
     </table>`;
-  const section = (title: string, body: string) =>
-    `<tr><td style="padding:16px 28px 4px"><h2 style="font-size:13px;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid #e2e8f0;padding-bottom:4px;margin:0 0 10px">${title}</h2>${body}</td></tr>`;
-  const empty = (text: string) => `<div style="font-size:12px;color:#64748b;font-style:italic">${text}</div>`;
-  const more = (shown: number, total: number) => total > shown ? `<div style="font-size:12px;color:#64748b;margin-top:4px">+${total - shown} more in the attached CSV.</div>` : "";
-  const na = '<span style="color:#94a3b8">Not available</span>';
+  const section = (title: string, body: string, hint = "") =>
+    `<tr><td style="padding:22px 32px 4px">
+      <h2 style="font-size:15px;font-weight:700;color:${C.ink};margin:0 0 ${hint ? "2px" : "12px"}"><span style="display:inline-block;width:4px;height:14px;background:${C.mint};border-radius:2px;margin-right:8px;vertical-align:-1px"></span>${title}</h2>
+      ${hint ? `<div style="font-size:12px;color:${C.muted};margin:0 0 12px 12px">${hint}</div>` : ""}${body}</td></tr>`;
+  const empty = (text: string) => `<div style="font-size:12px;color:${C.muted};background:${C.wash};border-radius:8px;padding:12px 14px">${text}</div>`;
+  const more = (shown: number, total: number) => total > shown ? `<div style="font-size:12px;color:${C.muted};margin-top:6px">+${total - shown} more in the attached CSV.</div>` : "";
+  const na = `<span style="color:${C.faint}">Not available</span>`;
+  const chip = (text: string, tone: "mint" | "coral" | "amber" | "grey") => {
+    const [bg, fg] = { mint: [C.mintWash, C.mintDark], coral: [C.coralWash, C.coral], amber: [C.amberWash, C.amber], grey: [C.wash, C.muted] }[tone];
+    return `<span style="display:inline-block;background:${bg};color:${fg};font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px;margin:0 4px 4px 0;white-space:nowrap">${text}</span>`;
+  };
   const who = (email: string | null, account: string | null) => esc([account, email].filter(Boolean).join(" · ") || "—");
 
   const summaryRows: string[][] = [
@@ -379,9 +394,9 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
   const { unit, buckets } = periodBuckets(period);
   const perBucket = (times: number[]) => buckets.map((b) => times.filter((t) => t >= b.start && t < b.end).length);
   const byDayTable = (rows: Array<[string, Array<number | string>]>) =>
-    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;border-collapse:collapse">
-      <tr style="background:#f1f5f9">${th("")}${buckets.map((b) => th(esc(b.label))).join("")}</tr>
-      ${rows.map(([name, vals]) => `<tr>${td(`<span style="color:#475569">${name}</span>`)}${vals.map((v) => td(String(v))).join("")}</tr>`).join("")}
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;border-collapse:collapse;border:1px solid ${C.line}">
+      <tr style="background:${C.wash}">${th("")}${buckets.map((b) => th(esc(b.label))).join("")}</tr>
+      ${rows.map(([name, vals]) => `<tr>${td(`<span style="color:${C.tealDark};font-weight:600">${name}</span>`)}${vals.map((v) => td(v === 0 ? `<span style="color:${C.faint}">0</span>` : `<strong>${v}</strong>`)).join("")}</tr>`).join("")}
     </table>`;
   const byUnitTitle = unit === "15 days" ? "per 15 days" : `by ${unit}`;
   const questionsByDay = byDayTable([["Questions", perBucket(questions.map((q) => q.created_at))]]);
@@ -410,7 +425,7 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
   const ticketCell = (t: WidgetHubspotTicket | null, sentAt: number) => {
     const text = esc(ticketText(t, sentAt));
     const url = t?.hubspot_ticket_id ? hubspotTicketUrl(t.hubspot_ticket_id) : null;
-    const color = t?.status === "closed" ? "#0d9488" : t?.status === "open" ? "#d97706" : "#94a3b8";
+    const color = t?.status === "closed" ? C.mintDark : t?.status === "open" ? C.amber : C.faint;
     return url ? `<a href="${esc(url)}" style="color:${color}">${text}</a>` : `<span style="color:${color}">${text}</span>`;
   };
 
@@ -432,68 +447,89 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
   const kbBody = kbVisitRows.length === 0 ? empty("No knowledge base visits from the widget in this period.")
     : table(["When", "From", "Article", "Account / user"], kbShown.map((v) => [
       td(esc(fmtDateTime(v.created_at, tz))), td(v.source),
-      td(v.url ? `<a href="${esc(v.url)}" style="color:#0d9488">${esc(v.title ?? v.url)}</a>` : '<span style="color:#64748b">Knowledge base home (article not trackable)</span>'),
+      td(v.url ? `<a href="${esc(v.url)}" style="color:${C.mintDark}">${esc(v.title ?? v.url)}</a>` : `<span style="color:${C.muted}">Knowledge base home (article not trackable)</span>`),
       td(who(v.user_email, v.account)),
     ])) + more(kbShown.length, kbVisitRows.length);
 
   const followUps = questions.filter((q) => q.outcome === "follow_up");
-  const followUpReason = (q: (typeof questions)[number]) => {
+  const followUpReasons = (q: (typeof questions)[number]) => {
     const kind = q.followUp?.kind;
-    const reasons = [
-      q.status === "error" ? "answer failed" : "",
-      q.status === "unanswered" ? "agent had no documented answer" : "",
-      q.rating === 1 ? "rated Not helpful" : "",
-      kind === "follow_up_request" ? "asked to be contacted" : kind === "email_submit" ? "then emailed support" : kind === "meeting" ? "then booked a meeting" : "",
-    ].filter(Boolean);
-    return reasons.join(" · ");
+    return [
+      q.status === "error" ? chip("Answer failed", "coral") : "",
+      q.status === "unanswered" ? chip("No documented answer", "coral") : "",
+      q.rating === 1 ? chip("Rated Not helpful", "amber") : "",
+      kind === "follow_up_request" ? chip("Asked to be contacted", "amber") : kind === "email_submit" ? chip("Emailed support", "mint") : kind === "meeting" ? chip("Booked a meeting", "mint") : "",
+    ].join("");
   };
   // Whether anyone picked it up: the HubSpot ticket of the email that followed, if any
   const followUpStatus = (q: (typeof questions)[number]) => {
     const f = q.followUp;
     let line: string;
-    if (f?.kind === "meeting") line = '<span style="color:#0d9488">Meeting booked</span>';
-    else if (f?.event_id != null) line = hubspotOn ? `HubSpot ticket: ${ticketCell(tickets.get(f.event_id) ?? null, f.created_at)}` : "Emailed support";
-    else line = '<span style="color:#94a3b8">No contact details left</span>';
-    return `<div style="margin-top:4px;font-size:11px;color:#64748b">${line}</div>`;
+    if (f?.kind === "meeting") line = `<span style="color:${C.mintDark};font-weight:600">Meeting booked</span>`;
+    else if (f?.event_id != null) line = hubspotOn ? `HubSpot ticket · <strong>${ticketCell(tickets.get(f.event_id) ?? null, f.created_at)}</strong>` : "Emailed support";
+    else line = `<span style="color:${C.faint}">No contact details left</span>`;
+    return `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed ${C.line};font-size:11px;color:${C.muted}">${line}</div>`;
   };
   const followShown = followUps.slice(0, 15);
   const questionsBody = (followUps.length === 0
     ? empty("No questions needed follow-up in this period.")
     : followShown.map((q) => `
-      <div style="border:1px solid #e2e8f0;border-left:3px solid #d97706;border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:12px">
-        <div style="color:#64748b">${esc(fmtDateTime(q.created_at, tz))} · ${esc(instLabel(q.installation_id))} · ${who(q.user_email, q.account)} · ${followUpReason(q)}</div>
-        <div style="margin-top:4px"><strong>Q:</strong> ${esc(truncate(q.question, 500))}</div>
-        ${q.answer ? `<div style="margin-top:4px;color:#334155"><strong>A:</strong> ${esc(truncate(q.answer, 400))}</div>` : ""}
+      <div style="border:1px solid ${C.line};border-left:4px solid ${q.status === "unanswered" || q.status === "error" ? C.coral : C.amber};border-radius:8px;padding:12px 14px;margin-bottom:10px;font-size:13px;background:#ffffff">
+        <div>${followUpReasons(q)}</div>
+        <div style="color:${C.muted};font-size:11px;margin-top:2px">${esc(fmtDateTime(q.created_at, tz))} · ${esc(instLabel(q.installation_id))} · ${who(q.user_email, q.account)}</div>
+        <div style="margin-top:8px;color:${C.ink};font-weight:600">${esc(truncate(q.question, 500))}</div>
+        ${q.answer ? `<div style="margin-top:6px;color:${C.body};font-size:12px;background:${C.wash};border-radius:6px;padding:8px 10px"><span style="color:${C.tealDark};font-weight:600">Agent:</span> ${esc(truncate(q.answer, 400))}</div>` : ""}
         ${followUpStatus(q)}
       </div>`).join("") + more(followShown.length, followUps.length))
-    + `<div style="font-size:12px;color:#64748b;margin-top:6px">All ${questions.length} questions, with full text and the agent's answers, are in the attached CSV.</div>`;
+    + `<div style="font-size:12px;color:${C.muted};margin-top:6px">All ${questions.length} questions, with full text and the agent's answers, are in the attached CSV.</div>`;
 
   const label = days === 7 ? "7-day" : days === 30 ? "30-day" : `${days}-day`;
+  const kpi = (value: string, labelText: string, note: string) =>
+    `<td width="25%" valign="top" style="padding:0 5px"><div style="background:${C.wash};border-radius:10px;padding:14px 12px">
+      <div style="font-size:26px;font-weight:700;color:${C.mintDark};line-height:1.1">${value}</div>
+      <div style="font-size:12px;font-weight:600;color:${C.ink};margin-top:4px">${labelText}</div>
+      <div style="font-size:11px;color:${C.muted};margin-top:2px">${note}</div></div></td>`;
+  const kpis = `<tr><td style="padding:22px 27px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+    ${kpi(String(questions.length), "Questions", `${outcomeCount("resolved")} resolved`)}
+    ${kpi(String(outcomeCount("follow_up")), "Need follow-up", summary.questions_unanswered ? `${summary.questions_unanswered} with no documented answer` : "&nbsp;")}
+    ${kpi(String(emails.length), "Emails to support", hubspotOn && emails.length ? `${ticketCount("closed")} closed in HubSpot` : "&nbsp;")}
+    ${kpi(meetingsAvailable ? String(r.meetingsBooked.length) : "—", "Meetings booked", `${calendlyClicks} link clicks`)}
+  </tr></table></td></tr>`;
   const html = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8" /><title>CS widget usage report</title></head>
-<body style="margin:0;padding:24px;background:#f8fafc;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#0C1222;font-size:14px;line-height:1.5">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:8px">
-<tr><td style="padding:24px 28px 8px">
-  <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Customer Success Agent widget</div>
-  <h1 style="font-size:20px;margin:4px 0 6px">Usage report — ${label} period</h1>
-  <div style="color:#475569;font-size:13px">${header}</div>
-  <div style="color:#64748b;font-size:12px;margin-top:4px">All widget installations (${r.installations.length}). Full records attached as <code>${csvFilenameFor(period, tz)}</code>.</div>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>CS widget usage report</title></head>
+<body style="margin:0;padding:24px 12px;background:${C.page};font-family:'DM Sans',-apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:${C.body};font-size:14px;line-height:1.5">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid ${C.line}">
+<tr><td style="background:${C.teal};padding:22px 32px">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+    <td width="56" valign="middle"><div style="background:#ffffff;border-radius:12px;width:48px;height:48px;overflow:hidden"><img src="${LOGO_URL}" width="48" height="48" alt="Discovered" style="display:block;border:0" /></div></td>
+    <td valign="middle" style="padding-left:12px">
+      <div style="font-size:11px;font-weight:700;color:${C.mintLight};text-transform:uppercase;letter-spacing:.14em">Discovered · Customer Success Agent</div>
+      <div style="font-size:21px;font-weight:700;color:#ffffff;margin-top:2px">Widget usage report — ${label}</div>
+    </td>
+  </tr></table>
+  <div style="font-size:12px;color:#cfe3e0;margin-top:12px">${header}</div>
 </td></tr>
-${section("Summary", table(["Metric", "Value", "Note"], summaryRows, [1]))}
+<tr><td style="height:4px;background:${C.mint};font-size:0;line-height:0">&nbsp;</td></tr>
+${kpis}
+${section("Summary", table(["Metric", "Value", "Note"], summaryRows, [1]), `All widget installations (${r.installations.length}). Every record is in the attached <strong>${csvFilenameFor(period, tz)}</strong>.`)}
 ${r.installations.length > 1 ? section("By installation", table(["Installation", "Meetings", "KB visits", "Emails", "Ratings", "Questions"], perInstall, [1, 2, 3, 4, 5])) : ""}
+${section("Questions needing follow-up", questionsBody, "Questions the agent couldn't answer, rated Not helpful, or followed by an email or meeting.")}
 ${section(`Questions ${byUnitTitle}`, questionsByDay)}
 ${section(`Meetings ${byUnitTitle}`, meetingsByDay)}
 ${section("Meetings", meetingsBody)}
-${section("Questions needing follow-up", questionsBody)}
 ${section("Ratings", ratingsBody)}
 ${section("Emails sent", emailsBody)}
 ${section("Knowledge base visits", kbBody)}
-<tr><td style="padding:16px 28px 24px">
-  <h2 style="font-size:13px;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid #e2e8f0;padding-bottom:4px;margin:0 0 10px">Data availability</h2>
-  <ul style="font-size:12px;color:#475569;margin:0;padding-left:18px">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>
-  <div style="font-size:11px;color:#94a3b8;margin-top:14px">${opts.sentBy
+<tr><td style="padding:22px 32px 26px">
+  <div style="background:${C.wash};border-radius:10px;padding:14px 16px">
+    <div style="font-size:12px;font-weight:700;color:${C.tealDark};text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Data availability</div>
+    <ul style="font-size:12px;color:${C.muted};margin:0;padding-left:18px">${notes.map((n) => `<li style="margin-bottom:3px">${esc(n)}</li>`).join("")}</ul>
+  </div>
+</td></tr>
+<tr><td style="background:${C.wash};border-top:1px solid ${C.line};padding:14px 32px;font-size:11px;color:${C.muted}">
+  <strong style="color:${C.tealDark}">Discovered</strong> · Customer Success Agent<br />${opts.sentBy
     ? `Sent on demand by ${esc(opts.sentBy)}. It is not part of the scheduled reports.`
-    : `You receive this because the ${label} report is on in your profile (My Profile → Email reports).`}</div>
+    : `You receive this because the ${label} report is on in your profile (My Profile → Email reports).`}
 </td></tr>
 </table>
 </body></html>`;
