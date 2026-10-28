@@ -199,7 +199,7 @@ function csvCell(v: string | number | null | undefined): string {
 
 // ─── Report data ────────────────────────────────────────────────────────────
 
-export type QuestionOutcome = "resolved" | "follow_up" | "unknown";
+export type QuestionOutcome = "resolved" | "follow_up";
 
 const RATING_LABELS: Record<number, string> = { 1: "Not helpful", 2: "OK", 3: "Great" };
 
@@ -262,9 +262,9 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     const rating = ratingByExchange.get(`${q.installation_id}:${q.exchange_id}`);
     if (q.status === "error" || q.status === "unanswered" || rating === 1) return "follow_up";
     if (followUpOf(q)) return "follow_up";
-    if (rating === 2 || rating === 3) return "resolved";
-    if (q.session_id) return "resolved";
-    return "unknown";
+    // Nothing went wrong and nobody asked for help afterwards (by session, or by network for
+    // questions from before sessions existed): the answer did the job
+    return "resolved";
   };
   const questions = r.questions.map((q) => ({ ...q, outcome: outcomeOf(q), rating: ratingByExchange.get(`${q.installation_id}:${q.exchange_id}`) ?? null, followUp: followUpOf(q) }));
   const outcomeCount = (o: QuestionOutcome) => questions.filter((q) => q.outcome === o).length;
@@ -325,14 +325,13 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     questions_resolved: outcomeCount("resolved"),
     questions_follow_up: outcomeCount("follow_up"),
     questions_unanswered: questions.filter((q) => q.status === "unanswered").length,
-    questions_unknown: outcomeCount("unknown"),
   };
 
   // ─── Availability notes ───────────────────────────────────────────────────
   const notes: string[] = [];
   notes.push("Follow up: the agent said it didn't know, the answer failed to load, the person marked it Not helpful, or they emailed us or booked a call within a day.");
   notes.push("Answered: the person kept going without any of that.");
-  if (v2Partial) notes.push(`Can't tell: visits from before ${v2Label}, when we didn't track visits yet. For those, an email counts only if it came from the same network within the hour.`);
+  if (v2Partial) notes.push(`Before ${v2Label} we didn't track visits, so for those questions an email counts only if it came from the same network within the hour, and calls aren't linked.`);
   if (!calendlyOn) notes.push("Meetings: Calendly isn't connected yet, so bookings aren't counted.");
   else if (v2Partial) notes.push(`Meetings are counted from ${v2Label}.`);
   const sourceNotes: Array<[string, number | null]> = [
@@ -378,7 +377,6 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     [td("Questions asked"), td(`<strong>${questions.length}</strong>`, { right: true }), td([
       `${outcomeCount("follow_up")} to follow up${summary.questions_unanswered ? ` (${summary.questions_unanswered} the agent didn't know)` : ""}`,
       `${outcomeCount("resolved")} answered`,
-      outcomeCount("unknown") ? `${outcomeCount("unknown")} can't tell` : "",
     ].filter(Boolean).join(" · "), { muted: true })],
     [td("Emails to support"), td(`<strong>${emails.length}</strong>`, { right: true }), td([
       followUpRequests ? `${followUpRequests} after marking an answer Not helpful` : "",
