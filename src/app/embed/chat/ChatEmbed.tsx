@@ -69,6 +69,11 @@ function getSessionId(widgetKey: string): string {
   }
 }
 
+/** The host page the widget is embedded in (best-effort; cross-origin parents only expose the referrer). */
+function hostPageUrl(): string {
+  try { return document.referrer || window.parent.location.href; } catch { return ""; }
+}
+
 function postToParent(payload: Record<string, unknown>) {
   try { window.parent?.postMessage({ source: "cs-widget", ...payload }, "*"); } catch { /* */ }
 }
@@ -217,7 +222,7 @@ export function ChatEmbed() {
             setView(v as View);
           }} />
         )}
-        {view === "chat" && <ChatView widgetKey={widgetKey} color={color} productName={productName} visitor={visitor} />}
+        {view === "chat" && <ChatView widgetKey={widgetKey} color={color} productName={productName} visitor={visitor} canFollowUp={config.enableEmail} />}
         {view === "email" && <EmailView widgetKey={widgetKey} color={color} visitor={visitor} onSent={() => setView("menu")} />}
       </div>
     </div>
@@ -341,8 +346,8 @@ function MenuRow({ color, icon, title, subtitle, onClick, external }: {
 
 // ─── Chat View ──────────────────────────────────────────────────────────────
 
-function ChatView({ widgetKey, color, productName, visitor }: {
-  widgetKey: string; color: string; productName: string; visitor: VisitorContext;
+function ChatView({ widgetKey, color, productName, visitor, canFollowUp }: {
+  widgetKey: string; color: string; productName: string; visitor: VisitorContext; canFollowUp: boolean;
 }) {
   const storageKey = useMemo(() => `cs-widget-history-${widgetKey}`, [widgetKey]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -542,6 +547,7 @@ function ChatView({ widgetKey, color, productName, visitor }: {
                 color={color}
                 widgetKey={widgetKey}
                 visitor={visitor}
+                canFollowUp={canFollowUp}
                 userQuestion={msg.role === "assistant" ? (messages[i - 1]?.content ?? "") : ""}
               />
             </div>
@@ -591,7 +597,7 @@ function ChatView({ widgetKey, color, productName, visitor }: {
   );
 }
 
-function MessageBubble({ msg, color, widgetKey, visitor, userQuestion }: { msg: Message; color: string; widgetKey: string; visitor: VisitorContext; userQuestion: string }) {
+function MessageBubble({ msg, color, widgetKey, visitor, canFollowUp, userQuestion }: { msg: Message; color: string; widgetKey: string; visitor: VisitorContext; canFollowUp: boolean; userQuestion: string }) {
   if (msg.role === "user") {
     return (
       <div className="flex justify-end">
@@ -642,6 +648,7 @@ function MessageBubble({ msg, color, widgetKey, visitor, userQuestion }: { msg: 
           <RatingBar
             widgetKey={widgetKey}
             visitor={visitor}
+            canFollowUp={canFollowUp}
             exchangeId={msg.exchangeId}
             question={userQuestion}
             answer={msg.content}
@@ -653,8 +660,8 @@ function MessageBubble({ msg, color, widgetKey, visitor, userQuestion }: { msg: 
   );
 }
 
-function RatingBar({ widgetKey, visitor, exchangeId, question, answer, initial }: {
-  widgetKey: string; visitor: VisitorContext; exchangeId: string; question: string; answer: string; initial: number | null;
+function RatingBar({ widgetKey, visitor, canFollowUp, exchangeId, question, answer, initial }: {
+  widgetKey: string; visitor: VisitorContext; canFollowUp: boolean; exchangeId: string; question: string; answer: string; initial: number | null;
 }) {
   const [rating, setRating] = useState<number | null>(initial);
   const [hovered, setHovered] = useState<number | null>(null);
@@ -662,6 +669,9 @@ function RatingBar({ widgetKey, visitor, exchangeId, question, answer, initial }
   const [feedback, setFeedback] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [followUpEmail, setFollowUpEmail] = useState(visitor.userEmail ?? "");
+  const [followUpError, setFollowUpError] = useState<string | null>(null);
+  const [followUpSent, setFollowUpSent] = useState(false);
 
   const post = async (value: number, fb: string | null): Promise<boolean> => {
     setSaving(true);
@@ -689,8 +699,35 @@ function RatingBar({ widgetKey, visitor, exchangeId, question, answer, initial }
     setShowFeedback(v === 1);
   };
 
+  // "Want us to follow up?": sends the question, answer and feedback to support as a ticket
+  const requestFollowUp = async (email: string): Promise<boolean> => {
+    setFollowUpError(null);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setFollowUpError("Please enter a valid email.");
+      return false;
+    }
+    setSaving(true);
+    let ok = false;
+    try {
+      const res = await fetch(`/api/widget/follow-up?key=${encodeURIComponent(widgetKey)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exchangeId, question, answer, feedback: feedback.trim() || null, email, sourceUrl: hostPageUrl(), ...visitor }),
+      });
+      ok = res.ok;
+    } catch { /* network error */ }
+    setSaving(false);
+    if (!ok) setFollowUpError("Couldn't send your request. Please try again.");
+    return ok;
+  };
+
   const submitFeedback = async () => {
     if (feedback.trim() && !(await post(1, feedback.trim()))) return;
+    const email = followUpEmail.trim();
+    if (canFollowUp && email) {
+      if (!(await requestFollowUp(email))) return;
+      setFollowUpSent(true);
+    }
     setShowFeedback(false);
   };
 
@@ -731,6 +768,19 @@ function RatingBar({ widgetKey, visitor, exchangeId, question, answer, initial }
             rows={2}
             className="w-full rounded-lg border border-red-200 bg-red-50/30 px-2.5 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-red-300"
           />
+          {canFollowUp && (
+            <div className="space-y-1">
+              <label className="block text-[11px] text-slate-600">Want us to follow up? Leave your email (optional)</label>
+              <input
+                type="email"
+                value={followUpEmail}
+                onChange={(e) => { setFollowUpEmail(e.target.value); setFollowUpError(null); }}
+                placeholder="you@company.com"
+                className="w-full rounded-lg border border-red-200 bg-red-50/30 px-2.5 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-red-300"
+              />
+              {followUpError && <p className="text-[10px] text-red-500">{followUpError}</p>}
+            </div>
+          )}
           <div className="flex gap-1.5">
             <button onClick={submitFeedback} disabled={saving} className="rounded-md bg-red-500 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-red-600 disabled:opacity-50">
               Submit
@@ -741,6 +791,7 @@ function RatingBar({ widgetKey, visitor, exchangeId, question, answer, initial }
           </div>
         </div>
       )}
+      {followUpSent && <p className="mt-1 text-[10px] text-slate-500">Thanks. Our team will follow up by email.</p>}
       {saveError && <p className="mt-1 text-[10px] text-red-500">Couldn&apos;t save your rating. Please try again.</p>}
     </div>
   );
@@ -765,9 +816,7 @@ function EmailView({ widgetKey, color, visitor, onSent }: { widgetKey: string; c
     }
     setSubmitting(true);
     try {
-      const sourceUrl = (() => {
-        try { return document.referrer || window.parent.location.href; } catch { return ""; }
-      })();
+      const sourceUrl = hostPageUrl();
       const res = await fetch(`/api/widget/ticket?key=${encodeURIComponent(widgetKey)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

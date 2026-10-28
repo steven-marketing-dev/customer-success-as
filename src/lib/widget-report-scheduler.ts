@@ -8,11 +8,14 @@
  * Only periods that ended in the last 48h are sent: turning a report on mid-cycle waits for
  * the next period instead of mailing an old one.
  *
+ * Each tick also links widget emails to their HubSpot tickets (src/lib/widget-tickets.ts).
+ *
  * WIDGET_REPORTS_ENABLED=1 turns it on (off by default; set 0 to stop it without a redeploy).
  */
 import { Repository } from "@/lib/db/repository";
 import { getDb, type User } from "@/lib/db/index";
 import { syncWidgetMeetings, isCalendlyConfigured } from "@/lib/widget-meetings";
+import { syncWidgetTickets } from "@/lib/widget-tickets";
 import {
   REPORT_PERIODS, DEFAULT_REPORT_TIMEZONE, buildWidgetUsageReport, latestCompletedPeriod, isValidTimezone,
   type ReportPeriod, type ReportOptions,
@@ -74,6 +77,8 @@ export async function runWidgetReportsTick(log: (m: string) => void = console.lo
     }
 
     await maybeSyncMeetings(repo, due.length > 0, log);
+    // Hourly: match new widget emails to HubSpot tickets and refresh open ones (no-op without a token)
+    await syncWidgetTickets({ onLog: (m) => log(`[hubspot-tickets] ${m}`) });
     if (due.length === 0) return;
     if (!isReportEmailConfigured()) {
       log(`[widget-reports] ${due.length} report(s) due but SendGrid/REPORTS_FROM is not configured`);

@@ -272,7 +272,8 @@ export interface WidgetRateEvent {
   created_at: number;
 }
 
-export type WidgetEventType = "kb_click" | "calendly_click" | "email_submit";
+// follow_up_request: a visitor rated an answer "Not helpful" and left an email to be contacted (DIS-234)
+export type WidgetEventType = "kb_click" | "calendly_click" | "email_submit" | "follow_up_request";
 
 export interface WidgetEvent {
   id: number;
@@ -341,6 +342,18 @@ export interface WidgetMeeting {
   event_status: "active" | "canceled";
   no_show: number; // 0 | 1
   synced_at: number;
+}
+
+/** The HubSpot ticket a widget email or follow-up request turned into (matched by subject and time). */
+export interface WidgetHubspotTicket {
+  id: number;
+  event_id: number;
+  hubspot_ticket_id: string | null;
+  status: "open" | "closed" | "not_found";
+  ticket_created_at: number | null;
+  closed_at: number | null;
+  attempts: number;
+  checked_at: number;
 }
 
 export interface WidgetReportSend {
@@ -715,6 +728,19 @@ function initDb(db: Database.Database) {
       sent_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       UNIQUE(user_id, period_days, period_end)
+    );
+
+    -- HubSpot ticket for each widget email / follow-up request (widget_events row), refreshed by
+    -- src/lib/widget-tickets.ts so the usage report can say whether a follow-up was handled
+    CREATE TABLE IF NOT EXISTS widget_hubspot_tickets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id INTEGER UNIQUE NOT NULL REFERENCES widget_events(id) ON DELETE CASCADE,
+      hubspot_ticket_id TEXT,
+      status TEXT NOT NULL,
+      ticket_created_at INTEGER,
+      closed_at INTEGER,
+      attempts INTEGER NOT NULL DEFAULT 1,
+      checked_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
     CREATE TABLE IF NOT EXISTS app_meta (
