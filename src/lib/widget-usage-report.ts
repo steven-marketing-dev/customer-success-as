@@ -289,7 +289,9 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
   const emails = emailEvents.map((e) => {
     let meta: { subject?: string; visitorEmail?: string } = {};
     try { meta = e.metadata ? JSON.parse(e.metadata) : {}; } catch { /* */ }
-    return { ...e, subject: meta.subject ?? null, visitorEmail: meta.visitorEmail ?? e.user_email ?? null, ticket: tickets.get(e.id) ?? null };
+    // Emails sent before the app stored subjects take the subject and visitor email from their HubSpot ticket
+    const ticket = tickets.get(e.id) ?? null;
+    return { ...e, subject: meta.subject || ticket?.subject || null, visitorEmail: meta.visitorEmail ?? e.user_email ?? ticket?.visitor_email ?? null, ticket };
   });
   const followUpRequests = emails.filter((e) => e.event_type === "follow_up_request").length;
   const ticketCount = (st: WidgetHubspotTicket["status"]) => emails.filter((e) => e.ticket?.status === st).length;
@@ -456,7 +458,10 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     const url = t?.hubspot_ticket_id ? hubspotTicketUrl(t.hubspot_ticket_id) : null;
     return url ? `<a href="${esc(url)}" style="text-decoration:none">${pill}</a>` : pill;
   };
-  const emailShown = emails.slice(0, 15);
+  // A card needs something to read: emails with no subject, question or ticket only count in the totals
+  const titleOf = (e: (typeof emails)[number]) => (e.subject ? e.subject.replace(/^Follow-up request:\s*/i, "") : questionOfEmail.get(e.id)?.question ?? null);
+  const emailCards = emails.filter((e) => titleOf(e));
+  const emailShown = emailCards.slice(-15).reverse();
   const emailsHint = emails.length === 0 ? ""
     : hubspotOn ? [
       `${ticketCount("closed")} of ${emails.length} closed${medianClose != null ? `, usually within ${fmtDuration(medianClose)}` : ""}`,
@@ -466,7 +471,7 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
   const emailsBody = emails.length === 0 ? empty("Nobody emailed support from the widget.")
     : emailShown.map((e) => {
       const q = questionOfEmail.get(e.id);
-      const title = e.subject ? e.subject.replace(/^Follow-up request:\s*/i, "") : q?.question ?? null;
+      const title = titleOf(e)!;
       return `
       <div style="border:1px solid ${C.line};border-radius:18px;padding:16px 18px;margin-bottom:12px;font-size:13px;background:#ffffff;box-shadow:${CARD_SHADOW}">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
@@ -474,10 +479,13 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
           ${hubspotOn ? `<td align="right" valign="top">${ticketPill(e.ticket, e.created_at)}</td>` : ""}
         </tr></table>
         <div style="color:${C.slate};font-size:12px;margin-top:2px">${esc(fmtDateTime(e.created_at, tz))} · ${esc(instLabel(e.installation_id))} · ${who(e.visitorEmail, e.account)}</div>
-        <div style="margin-top:8px;color:${C.ink};font-weight:600;font-size:14px">${title ? esc(truncate(title, 300)) : `<span style="color:${C.slate};font-weight:400">Subject not tracked yet</span>`}</div>
+        <div style="margin-top:8px;color:${C.ink};font-weight:600;font-size:14px">${esc(truncate(title, 300))}</div>
         ${q?.answer ? `<div style="margin-top:8px;color:${C.body};font-size:12px;background:${C.mist};border-radius:12px;padding:10px 14px"><span style="color:${C.teal700};font-weight:600">What the agent told them first:</span> ${esc(truncate(q.answer, 300))}</div>` : ""}
       </div>`;
-    }).join("") + more(emailShown.length, emails.length);
+    }).join("") + more(emailShown.length, emailCards.length)
+    + (emails.length > emailCards.length
+      ? `<div style="font-size:12px;color:${C.slate};margin-top:6px">${emails.length - emailCards.length === 1 ? "1 email has" : `${emails.length - emailCards.length} emails have`} no subject and no HubSpot ticket we could find, so ${emails.length - emailCards.length === 1 ? "it's" : "they're"} only in the spreadsheet.</div>`
+      : "");
 
   // Questions nobody emailed about: what the knowledge base is missing
   const gapReason = (q: (typeof questions)[number]) => [

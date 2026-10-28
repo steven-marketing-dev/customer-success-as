@@ -27,11 +27,11 @@ const MATCH_AFTER_SECONDS = 10 * 60;
 
 interface HubspotEmail {
   id: string;
-  properties: { hs_email_text?: string | null; hs_email_direction?: string | null };
+  properties: { hs_email_text?: string | null; hs_email_direction?: string | null; hs_email_subject?: string | null };
 }
 
 /** What the app's footer says on a ticket's incoming email (null when it has no widget footer). */
-interface WidgetFooter { sessionId: string | null; visitorEmail: string | null }
+interface WidgetFooter { sessionId: string | null; visitorEmail: string | null; subject: string | null }
 
 interface HubspotTicket {
   id: string;
@@ -75,9 +75,13 @@ async function hubspotCall<T>(path: string, body?: unknown): Promise<T> {
   }
 }
 
-function ticketRow(t: HubspotTicket): { hubspot_ticket_id: string; status: WidgetHubspotTicket["status"]; ticket_created_at: number | null; closed_at: number | null } {
+/** Ticket state, plus what the visitor wrote when known (the incoming email's subject beats the ticket's, which HubSpot rewrites). */
+function ticketRow(t: HubspotTicket, footer?: WidgetFooter | null) {
   const closedAt = toUnix(t.properties.closed_date);
-  return { hubspot_ticket_id: t.id, status: closedAt ? "closed" : "open", ticket_created_at: toUnix(t.properties.createdate), closed_at: closedAt };
+  return {
+    hubspot_ticket_id: t.id, status: (closedAt ? "closed" : "open") as WidgetHubspotTicket["status"], ticket_created_at: toUnix(t.properties.createdate), closed_at: closedAt,
+    subject: footer?.subject ?? t.properties.subject?.trim() ?? "", visitor_email: footer?.visitorEmail ?? null,
+  };
 }
 
 /** EMAIL-channel tickets created around one inbound widget email. */
@@ -102,7 +106,7 @@ async function widgetFooterOf(ticketId: string): Promise<WidgetFooter | null> {
   const ids = (assoc.results ?? []).map((a) => String(a.toObjectId));
   if (ids.length === 0) return null;
   const data = await hubspotCall<{ results: HubspotEmail[] }>("/crm/v3/objects/emails/batch/read", {
-    properties: ["hs_email_text", "hs_email_direction"],
+    properties: ["hs_email_text", "hs_email_direction", "hs_email_subject"],
     inputs: ids.slice(0, 100).map((id) => ({ id })),
   });
   for (const e of data.results) {
@@ -111,6 +115,7 @@ async function widgetFooterOf(ticketId: string): Promise<WidgetFooter | null> {
     return {
       sessionId: /Widget session: ([A-Za-z0-9-]{8,64})/.exec(text)?.[1] ?? null,
       visitorEmail: /Visitor email: (\S+@\S+)/.exec(text)?.[1]?.toLowerCase() ?? null,
+      subject: e.properties.hs_email_subject?.trim() || null,
     };
   }
   return null;
@@ -156,8 +161,10 @@ export async function syncWidgetTickets(opts: { onLog?: (m: string) => void } = 
       const byId = new Map(data.results.map((t) => [t.id, t]));
       for (const c of chunk) {
         const t = byId.get(c.knownId);
+        // The subject is read once per ticket (also for tickets linked before it was stored)
+        const footer = t && c.ticket?.subject == null ? await widgetFooterOf(t.id) : null;
         // A ticket deleted in HubSpot no longer counts as handled or open
-        repo.upsertWidgetHubspotTicket(c.event_id, t ? ticketRow(t) : NOT_FOUND);
+        repo.upsertWidgetHubspotTicket(c.event_id, t ? ticketRow(t, footer) : NOT_FOUND);
         if (t && !c.ticket) matched++;
         checked++;
       }
@@ -180,7 +187,7 @@ export async function syncWidgetTickets(opts: { onLog?: (m: string) => void } = 
       }
       pending.push({ ...c, visitorEmail: metaOf(c.metadata).visitorEmail, near });
     }
-    const assigned = new Map<number, HubspotTicket>();
+    const assigned = new Map<number, { t: HubspotTicket; footer: WidgetFooter }>();
     const gap = (t: HubspotTicket, at: number) => Math.abs((toUnix(t.properties.createdate) ?? 0) - at);
     const passes: Array<(c: Pending, f: WidgetFooter) => boolean> = [
       (c, f) => !!c.session_id && f.sessionId === c.session_id,
@@ -189,16 +196,16 @@ export async function syncWidgetTickets(opts: { onLog?: (m: string) => void } = 
     ];
     for (const pass of passes) {
       for (const c of pending.filter((x) => !assigned.has(x.event_id))) {
-        const t = c.near
+        const hit = c.near
           .filter((x) => !taken.has(x.t.id) && pass(c, x.footer))
-          .sort((a, b) => gap(a.t, c.created_at) - gap(b.t, c.created_at))[0]?.t;
-        if (t) { assigned.set(c.event_id, t); taken.add(t.id); }
+          .sort((a, b) => gap(a.t, c.created_at) - gap(b.t, c.created_at))[0];
+        if (hit) { assigned.set(c.event_id, hit); taken.add(hit.t.id); }
       }
     }
     for (const c of pending) {
-      const t = assigned.get(c.event_id);
-      if (t) matched++;
-      repo.upsertWidgetHubspotTicket(c.event_id, t ? ticketRow(t) : NOT_FOUND);
+      const hit = assigned.get(c.event_id);
+      if (hit) matched++;
+      repo.upsertWidgetHubspotTicket(c.event_id, hit ? ticketRow(hit.t, hit.footer) : NOT_FOUND);
       checked++;
     }
 
