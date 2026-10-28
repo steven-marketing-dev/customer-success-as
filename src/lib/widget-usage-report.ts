@@ -451,12 +451,16 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
   for (const q of questions) if (q.followUp?.event_id != null) questionOfEmail.set(q.followUp.event_id, q);
   const closedTimes = emails.filter((e) => e.ticket?.status === "closed" && e.ticket.closed_at).map((e) => e.ticket!.closed_at! - e.created_at).sort((x, y) => x - y);
   const medianClose = closedTimes.length ? closedTimes[Math.floor((closedTimes.length - 1) / 2)] : null;
-  const ticketPill = (t: WidgetHubspotTicket | null, sentAt: number) => {
-    const text = esc(ticketText(t, sentAt));
-    const [bg, border, fg] = t?.status === "closed" ? [C.tealPale, C.tealPale, C.teal900] : t?.status === "open" ? ["#ffffff", C.orange, C.ink] : [C.ice, C.ice, C.slate];
-    const pill = `<span style="display:inline-block;background:${bg};border:1px solid ${border};color:${fg};font-size:12px;font-weight:600;border-radius:100px;padding:4px 14px;white-space:nowrap">${text}</span>`;
+  // Ticket state as plain status text (a dot, not a pill, so it doesn't read like the tags on the left)
+  const ticketStatus = (t: WidgetHubspotTicket | null, sentAt: number) => {
+    const dot = t?.status === "closed" ? C.teal : t?.status === "open" ? C.orange : C.tealMuted;
+    const label = t?.status === "closed" || t?.status === "open" ? `Ticket ${ticketText(t, sentAt).toLowerCase()}` : ticketText(t, sentAt);
+    return `<span style="font-size:12px;font-weight:600;color:${C.ink};white-space:nowrap"><span style="display:inline-block;width:8px;height:8px;border-radius:8px;background:${dot};margin-right:6px;vertical-align:1px"></span>${esc(label)}</span>`;
+  };
+  // The home page's secondary button: outlined teal pill with an arrow
+  const ticketButton = (t: WidgetHubspotTicket | null) => {
     const url = t?.hubspot_ticket_id ? hubspotTicketUrl(t.hubspot_ticket_id) : null;
-    return url ? `<a href="${esc(url)}" style="text-decoration:none">${pill}</a>` : pill;
+    return url ? `<div style="margin-top:12px;text-align:right"><a href="${esc(url)}" style="display:inline-block;border:1.5px solid ${C.teal};color:${C.teal700};font-size:12px;font-weight:600;text-decoration:none;border-radius:100px;padding:6px 16px">Open ticket in HubSpot &rarr;</a></div>` : "";
   };
   // A card needs something to read: emails with no subject, question or ticket only count in the totals
   const titleOf = (e: (typeof emails)[number]) => (e.subject ? e.subject.replace(/^Follow-up request:\s*/i, "") : questionOfEmail.get(e.id)?.question ?? null);
@@ -476,11 +480,12 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
       <div style="border:1px solid ${C.line};border-radius:18px;padding:16px 18px;margin-bottom:12px;font-size:13px;background:#ffffff;box-shadow:${CARD_SHADOW}">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
           <td valign="top">${e.event_type === "follow_up_request" ? chip("Asked us to reach out", "orange") : chip("Emailed support", "teal")}${q?.status === "unanswered" ? chip("Agent didn't know", "coral") : ""}</td>
-          ${hubspotOn ? `<td align="right" valign="top">${ticketPill(e.ticket, e.created_at)}</td>` : ""}
+          ${hubspotOn ? `<td align="right" valign="top" style="padding-top:4px">${ticketStatus(e.ticket, e.created_at)}</td>` : ""}
         </tr></table>
         <div style="color:${C.slate};font-size:12px;margin-top:2px">${esc(fmtDateTime(e.created_at, tz))} · ${esc(instLabel(e.installation_id))} · ${who(e.visitorEmail, e.account)}</div>
         <div style="margin-top:8px;color:${C.ink};font-weight:600;font-size:14px">${esc(truncate(title, 300))}</div>
         ${q?.answer ? `<div style="margin-top:8px;color:${C.body};font-size:12px;background:${C.mist};border-radius:12px;padding:10px 14px"><span style="color:${C.teal700};font-weight:600">What the agent told them first:</span> ${esc(truncate(q.answer, 300))}</div>` : ""}
+        ${hubspotOn ? ticketButton(e.ticket) : ""}
       </div>`;
     }).join("") + more(emailShown.length, emailCards.length)
     + (emails.length > emailCards.length
