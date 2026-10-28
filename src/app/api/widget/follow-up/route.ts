@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
   ].join("\n").trim();
 
   try {
-    const via = await submitWidgetIntake({
+    const { via, ticketId } = await submitWidgetIntake({
       installation, subject, description, email, sourceUrl, sessionId: visitor.session_id,
       origin: "Requested after rating an answer Not helpful",
     });
@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
         event_type: "follow_up_request",
         source_url: sourceUrl,
         ip_hash: ipHash,
-        metadata: { subject, visitorEmail: email, via, exchangeId },
+        metadata: { subject, visitorEmail: email, via, exchangeId, ...(ticketId ? { ticketId } : {}) },
       }, { ...visitor, user_email: visitor.user_email ?? email.toLowerCase() });
     } catch (e) {
       console.warn("[widget/follow-up] event record failed:", e);

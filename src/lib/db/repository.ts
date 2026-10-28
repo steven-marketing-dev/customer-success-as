@@ -2594,20 +2594,20 @@ export class Repository {
    * younger than 5 minutes so HubSpot has time to create the ticket.
    */
   listWidgetTicketCandidates(since: number, now = Math.floor(Date.now() / 1000)): Array<{
-    event_id: number; created_at: number; metadata: string | null; ticket: WidgetHubspotTicket | null;
+    event_id: number; created_at: number; metadata: string | null; session_id: string | null; ticket: WidgetHubspotTicket | null;
   }> {
     const rows = this.db.prepare(`
-      SELECT e.id AS event_id, e.created_at, e.metadata, t.id AS t_id
+      SELECT e.id AS event_id, e.created_at, e.metadata, e.session_id, t.id AS t_id
       FROM widget_events e LEFT JOIN widget_hubspot_tickets t ON t.event_id = e.id
       WHERE e.event_type IN ('email_submit', 'follow_up_request') AND e.created_at >= ? AND e.created_at <= ?
         AND (t.id IS NULL
           OR (t.status = 'not_found' AND t.attempts < 6 AND t.checked_at <= ?)
           OR (t.status = 'open' AND t.checked_at <= ?))
       ORDER BY e.created_at
-    `).all(since, now - 300, now - 3600, now - 3600) as Array<{ event_id: number; created_at: number; metadata: string | null; t_id: number | null }>;
+    `).all(since, now - 300, now - 3600, now - 3600) as Array<{ event_id: number; created_at: number; metadata: string | null; session_id: string | null; t_id: number | null }>;
     const get = this.db.prepare("SELECT * FROM widget_hubspot_tickets WHERE id = ?");
     return rows.map((r) => ({
-      event_id: r.event_id, created_at: r.created_at, metadata: r.metadata,
+      event_id: r.event_id, created_at: r.created_at, metadata: r.metadata, session_id: r.session_id,
       ticket: r.t_id != null ? get.get(r.t_id) as WidgetHubspotTicket : null,
     }));
   }
