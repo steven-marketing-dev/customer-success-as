@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Repository } from "@/lib/db/repository";
 import { requireAuth } from "@/lib/auth";
 import { buildWidgetAnalyticsHtml } from "@/lib/widget-report";
+import { loginUrlFor } from "@/lib/login-redirect";
 
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 365;
@@ -12,7 +13,7 @@ export async function GET(
 ) {
   const session = requireAuth(req);
   if (!session) {
-    return NextResponse.redirect(new URL("/login", req.url));
+    return NextResponse.redirect(new URL(loginUrlFor(req.nextUrl.pathname, req.nextUrl.search), req.url));
   }
   if (session.role !== "master") {
     return new NextResponse("Forbidden", { status: 403 });

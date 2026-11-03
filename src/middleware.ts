@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
+import { loginUrlFor } from "@/lib/login-redirect";
 
 const PUBLIC_PATHS = [
   "/login",
@@ -41,7 +42,8 @@ export async function middleware(req: NextRequest) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
-    return NextResponse.redirect(new URL("/login", req.url));
+    // Keep the requested page (path + query) so login can send the user back (DIS-308)
+    return NextResponse.redirect(new URL(loginUrlFor(pathname, req.nextUrl.search), req.url));
   }
 
   try {
@@ -62,7 +64,7 @@ export async function middleware(req: NextRequest) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Session expired" }, { status: 401 });
     }
-    const res = NextResponse.redirect(new URL("/login", req.url));
+    const res = NextResponse.redirect(new URL(loginUrlFor(pathname, req.nextUrl.search), req.url));
     res.cookies.set("session", "", { maxAge: 0, path: "/" });
     return res;
   }
