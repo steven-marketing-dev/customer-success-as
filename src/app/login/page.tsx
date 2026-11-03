@@ -2,6 +2,7 @@
 
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { safeNextPath } from "@/lib/login-redirect";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -28,7 +29,9 @@ export default function LoginPage() {
         return;
       }
 
-      router.push("/");
+      // Back to the page that sent us here, e.g. /?tab=dashboard from the report email (DIS-308)
+      const next = safeNextPath(new URLSearchParams(window.location.search).get("next"));
+      router.push(next ?? "/");
       router.refresh();
     } catch {
       setError("Connection error");
