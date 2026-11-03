@@ -2604,6 +2604,54 @@ export class Repository {
     `).all(since) as ReturnType<Repository["listWidgetGaps"]>;
   }
 
+  /**
+   * The latest times a gap question was asked, each with what came before it in the chat, so a
+   * follow-up like "this did not work" makes sense to whoever answers it. Earlier turns are the
+   * visitor's previous questions in the same session (same network and widget before sessions
+   * existed) within the two hours before.
+   */
+  getWidgetGapOccurrences(questionNorm: string, since: number, limit = 3): Array<{
+    id: number; question: string; answer: string; created_at: number; installation: string;
+    user_email: string | null; account: string | null;
+    earlier: Array<{ question: string; answer: string; created_at: number }>;
+  }> {
+    const rows = this.db.prepare(`
+      SELECT q.id, q.question, q.answer, q.created_at, q.session_id, q.ip_hash, q.installation_id, q.user_email, q.account, i.name AS installation
+      FROM widget_questions q
+      JOIN widget_installations i ON i.id = q.installation_id
+      LEFT JOIN widget_gap_reviews g ON g.question_norm = q.question_norm
+      WHERE q.question_norm = ? AND q.status = 'unanswered' AND q.created_at >= ? AND (g.question_norm IS NULL OR q.created_at > g.reviewed_at)
+      ORDER BY q.created_at DESC, q.id DESC
+      LIMIT ?
+    `).all(questionNorm, since, limit) as Array<{ id: number; question: string; answer: string; created_at: number; session_id: string | null; ip_hash: string; installation_id: number; user_email: string | null; account: string | null; installation: string }>;
+    const earlierStmt = this.db.prepare(`
+      SELECT question, answer, created_at FROM widget_questions
+      WHERE installation_id = ? AND id < ? AND created_at <= ? AND created_at >= ? - 7200
+        AND ((? IS NOT NULL AND session_id = ?) OR (? IS NULL AND session_id IS NULL AND ip_hash = ?))
+      ORDER BY created_at DESC, id DESC
+      LIMIT 3
+    `);
+    return rows.map((r) => ({
+      id: r.id, question: r.question, answer: r.answer, created_at: r.created_at, installation: r.installation,
+      user_email: r.user_email, account: r.account,
+      earlier: (earlierStmt.all(r.installation_id, r.id, r.created_at, r.created_at, r.session_id, r.session_id, r.session_id, r.ip_hash) as Array<{ question: string; answer: string; created_at: number }>).reverse(),
+    }));
+  }
+
+  /** The stored widget question for an exchange, with the visitor's earlier questions in the same session (two hours). */
+  getWidgetExchangeContext(installationId: number, exchangeId: string): { question: string; answer: string; status: string; earlier: Array<{ question: string; answer: string }> } | null {
+    const q = this.db.prepare(`SELECT id, question, answer, status, session_id, ip_hash, created_at FROM widget_questions WHERE installation_id = ? AND exchange_id = ?`)
+      .get(installationId, exchangeId) as { id: number; question: string; answer: string; status: string; session_id: string | null; ip_hash: string; created_at: number } | undefined;
+    if (!q) return null;
+    const earlier = (this.db.prepare(`
+      SELECT question, answer FROM widget_questions
+      WHERE installation_id = ? AND id < ? AND created_at >= ? - 7200
+        AND ((? IS NOT NULL AND session_id = ?) OR (? IS NULL AND session_id IS NULL AND ip_hash = ?))
+      ORDER BY id DESC LIMIT 3
+    `).all(installationId, q.id, q.created_at, q.session_id, q.session_id, q.session_id, q.ip_hash) as Array<{ question: string; answer: string }>).reverse();
+    return { question: q.question, answer: q.answer, status: q.status, earlier };
+  }
+
   reviewWidgetGap(questionNorm: string, status: "answered" | "dismissed", qaId: number | null, userId: number): void {
     this.db.prepare(`
       INSERT INTO widget_gap_reviews (question_norm, status, qa_id, reviewed_by, reviewed_at) VALUES (?, ?, ?, ?, unixepoch())

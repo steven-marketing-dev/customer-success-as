@@ -24,6 +24,10 @@ interface Message {
   questionId?: number | null;
   streaming?: boolean;
   rating?: number | null;
+  /** The agent had no documented answer: offer a ready-made message to support (DIS-234) */
+  gap?: boolean;
+  /** Email the support message went to, once sent */
+  supportSentTo?: string;
 }
 
 interface WidgetConfig {
@@ -496,6 +500,7 @@ function ChatView({ widgetKey, color, productName, visitor, canFollowUp }: {
                   articles: event.articles ?? [],
                   exchangeId: event.exchangeId,
                   questionId: event.questionId ?? null,
+                  gap: Boolean(event.gap),
                   streaming: false,
                 };
                 return next;
@@ -549,6 +554,8 @@ function ChatView({ widgetKey, color, productName, visitor, canFollowUp }: {
                 visitor={visitor}
                 canFollowUp={canFollowUp}
                 userQuestion={msg.role === "assistant" ? (messages[i - 1]?.content ?? "") : ""}
+                earlierQuestion={msg.role === "assistant" ? (messages[i - 3]?.role === "user" ? messages[i - 3].content : "") : ""}
+                onSupportSent={(email) => setMessages((prev) => prev.map((m, j) => (j === i ? { ...m, supportSentTo: email } : m)))}
               />
             </div>
           ))
@@ -597,7 +604,10 @@ function ChatView({ widgetKey, color, productName, visitor, canFollowUp }: {
   );
 }
 
-function MessageBubble({ msg, color, widgetKey, visitor, canFollowUp, userQuestion }: { msg: Message; color: string; widgetKey: string; visitor: VisitorContext; canFollowUp: boolean; userQuestion: string }) {
+function MessageBubble({ msg, color, widgetKey, visitor, canFollowUp, userQuestion, earlierQuestion, onSupportSent }: {
+  msg: Message; color: string; widgetKey: string; visitor: VisitorContext; canFollowUp: boolean;
+  userQuestion: string; earlierQuestion: string; onSupportSent: (email: string) => void;
+}) {
   if (msg.role === "user") {
     return (
       <div className="flex justify-end">
@@ -644,6 +654,20 @@ function MessageBubble({ msg, color, widgetKey, visitor, canFollowUp, userQuesti
           </div>
         )}
 
+        {!msg.streaming && msg.exchangeId && msg.gap && canFollowUp && (
+          <SupportDraft
+            widgetKey={widgetKey}
+            visitor={visitor}
+            color={color}
+            exchangeId={msg.exchangeId}
+            question={userQuestion}
+            earlierQuestion={earlierQuestion}
+            answer={msg.content}
+            sentTo={msg.supportSentTo ?? null}
+            onSent={onSupportSent}
+          />
+        )}
+
         {!msg.streaming && msg.exchangeId && (
           <RatingBar
             widgetKey={widgetKey}
@@ -655,6 +679,122 @@ function MessageBubble({ msg, color, widgetKey, visitor, canFollowUp, userQuesti
             initial={msg.rating ?? null}
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Support draft ──────────────────────────────────────────────────────────
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function quoteLine(s: string, max: number): string {
+  const flat = s.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+/** The message the visitor sends to support when the agent had no answer. Short, in their voice,
+ *  with the earlier question when the last one leans on it ("this did not work"). */
+function draftSupportMessage(question: string, earlierQuestion: string): string {
+  const lines = ["Hi, I asked the help assistant about this and it didn't have an answer:", "", `"${quoteLine(question, 500)}"`];
+  if (earlierQuestion) lines.push("", `Before that I asked: "${quoteLine(earlierQuestion, 300)}"`);
+  lines.push("", "Could you help me with it? Thank you!");
+  return lines.join("\n");
+}
+
+function rememberedEmail(widgetKey: string): string {
+  try { return sessionStorage.getItem(`cs-widget-email-${widgetKey}`) ?? ""; } catch { return ""; }
+}
+
+function rememberEmail(widgetKey: string, email: string) {
+  try { sessionStorage.setItem(`cs-widget-email-${widgetKey}`, email); } catch { /* */ }
+}
+
+function SupportDraft({ widgetKey, visitor, color, exchangeId, question, earlierQuestion, answer, sentTo, onSent }: {
+  widgetKey: string; visitor: VisitorContext; color: string; exchangeId: string; question: string;
+  earlierQuestion: string; answer: string; sentTo: string | null; onSent: (email: string) => void;
+}) {
+  const [message, setMessage] = useState(() => draftSupportMessage(question, earlierQuestion));
+  const [email, setEmail] = useState(() => visitor.userEmail ?? rememberedEmail(widgetKey));
+  const [editing, setEditing] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Known email (host page or typed earlier in this tab): sending is a single click
+  const [emailKnown] = useState(() => EMAIL_RE.test(email.trim()));
+
+  if (sentTo) {
+    return (
+      <div className="rounded-xl border px-3 py-2.5 text-xs text-slate-700 flex items-start gap-2" style={{ borderColor: `${color}40`, backgroundColor: `${color}0d` }}>
+        <Check size={14} className="flex-shrink-0 mt-0.5" style={{ color }} />
+        <span>Sent. Our support team has your question and will reply to <strong>{sentTo}</strong> as soon as possible, usually within 60 minutes.</span>
+      </div>
+    );
+  }
+
+  const send = async () => {
+    setError(null);
+    const to = email.trim();
+    if (!EMAIL_RE.test(to)) { setError("Please enter a valid email so the team can reply."); return; }
+    if (!message.trim()) { setError("The message is empty."); return; }
+    setSending(true);
+    try {
+      const res = await fetch(`/api/widget/follow-up?key=${encodeURIComponent(widgetKey)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "no_answer", exchangeId, question, answer, message: message.trim(), email: to, sourceUrl: hostPageUrl(), ...visitor }),
+      });
+      if (!res.ok) throw new Error();
+      rememberEmail(widgetKey, to);
+      onSent(to);
+    } catch {
+      setError("Couldn't send it. Please try again.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border px-3 py-2.5 space-y-2" style={{ borderColor: `${color}40`, backgroundColor: `${color}0d` }}>
+      <div>
+        <p className="text-xs font-semibold text-slate-800">Our support team can help with this</p>
+        <p className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">We wrote up your question for them. Send it and they&apos;ll get back to you as soon as possible, usually within 60 minutes.</p>
+      </div>
+      {editing ? (
+        <textarea
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          rows={6}
+          maxLength={4000}
+          className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-1 resize-none"
+        />
+      ) : (
+        <div className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 whitespace-pre-wrap max-h-28 overflow-y-auto">{message}</div>
+      )}
+      {!emailKnown && (
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => { setEmail(e.target.value); setError(null); }}
+          placeholder="Your email, so we can reply"
+          maxLength={200}
+          className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1"
+        />
+      )}
+      {error && <p className="text-[10px] text-red-500">{error}</p>}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={send}
+          disabled={sending}
+          className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+          style={{ backgroundColor: color }}
+        >
+          {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+          {sending ? "Sending…" : "Send to support"}
+        </button>
+        {!editing && (
+          <button onClick={() => setEditing(true)} className="text-[11px] text-slate-500 hover:text-slate-700">Edit message</button>
+        )}
+        {emailKnown && <span className="text-[10px] text-slate-400 truncate ml-auto">Reply to {email.trim()}</span>}
       </div>
     </div>
   );
@@ -717,7 +857,8 @@ function RatingBar({ widgetKey, visitor, canFollowUp, exchangeId, question, answ
       ok = res.ok;
     } catch { /* network error */ }
     setSaving(false);
-    if (!ok) setFollowUpError("Couldn't send your request. Please try again.");
+    if (ok) rememberEmail(widgetKey, email);
+    else setFollowUpError("Couldn't send your request. Please try again.");
     return ok;
   };
 
@@ -826,6 +967,7 @@ function EmailView({ widgetKey, color, visitor, onSent }: { widgetKey: string; c
         const body = await res.json().catch(() => ({} as { error?: string }));
         throw new Error(body?.error ?? `HTTP ${res.status}`);
       }
+      rememberEmail(widgetKey, email.trim());
       setSent(true);
       setTimeout(onSent, 2500);
     } catch (err) {

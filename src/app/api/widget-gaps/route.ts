@@ -15,8 +15,15 @@ const WINDOW_SECONDS = 90 * 86400;
 export async function GET(req: NextRequest) {
   if (!requireAuth(req)) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   const repo = new Repository(getDb());
-  const gaps = repo.listWidgetGaps(Math.floor(Date.now() / 1000) - WINDOW_SECONDS)
-    .map((g) => ({ ...g, emailed: !!g.emailed, topic: repo.topCategoryOf(g.question)?.name ?? null }));
+  const since = Math.floor(Date.now() / 1000) - WINDOW_SECONDS;
+  // Each gap carries its latest occurrences with the chat that led to them: "this did not work"
+  // means nothing on its own
+  const gaps = repo.listWidgetGaps(since)
+    .map((g) => {
+      const occurrences = repo.getWidgetGapOccurrences(g.question_norm, since);
+      const context = [occurrences[0]?.earlier.map((e) => e.question).join(" "), g.question].filter(Boolean).join(" ");
+      return { ...g, emailed: !!g.emailed, topic: repo.topCategoryOf(context)?.name ?? null, occurrences };
+    });
   return NextResponse.json({ gaps });
 }
 

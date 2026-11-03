@@ -97,7 +97,7 @@ export function createEmailReportsTour(actions: { openProfile: () => void }): To
 /** Widget gap queue (DIS-234): questions the widget agent couldn't answer, on the Dashboard. */
 export function createWidgetGapsTour(actions: { openDashboard: () => void }): TourDefinition {
   return {
-    key: "widget-gaps-v1",
+    key: "widget-gaps-v2",
     name: "Widget Gap Queue",
     steps: [
       {
@@ -109,8 +109,14 @@ export function createWidgetGapsTour(actions: { openDashboard: () => void }): To
         waitForDom: true,
       },
       {
+        title: "See what led to it",
+        description: "Short follow-ups like \"this did not work\" show what the visitor asked right before. Click See the chat for the whole conversation, with the account or email when we have it.",
+        target: '[data-tour="widget-gaps"]',
+        position: "bottom",
+      },
+      {
         title: "Answer it once",
-        description: "Click Answer it and write what the agent should say. It becomes a Q&A in the knowledge base and the agent uses it from the next question. Dismiss the ones that aren't real questions.",
+        description: "Click Answer it, rewrite the question so it makes sense on its own and write what the agent should say. It becomes a Q&A in the knowledge base and the agent uses it from the next question. Dismiss the ones that aren't real questions.",
         target: '[data-tour="widget-gaps"]',
         position: "bottom",
       },
@@ -119,5 +125,5 @@ export function createWidgetGapsTour(actions: { openDashboard: () => void }): To
 }
 
 /** Registry of all available tours */
-export const TOUR_KEYS = ["video-guides-v1", "email-reports-v1", "widget-gaps-v1"] as const;
+export const TOUR_KEYS = ["video-guides-v1", "email-reports-v1", "widget-gaps-v2"] as const;
 export type TourKey = (typeof TOUR_KEYS)[number];

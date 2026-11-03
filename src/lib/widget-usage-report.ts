@@ -466,7 +466,7 @@ export function buildWidgetUsageReport(repo: Repository, period: ReportPeriod, o
     return url ? `<div style="margin-top:12px;text-align:right"><a href="${esc(url)}" style="display:inline-block;border:1.5px solid ${C.teal};color:${C.teal700};font-size:12px;font-weight:600;text-decoration:none;border-radius:100px;padding:6px 16px">Open ticket in HubSpot &rarr;</a></div>` : "";
   };
   // A card needs something to read: emails with no subject, question or ticket only count in the totals
-  const titleOf = (e: (typeof emails)[number]) => (e.subject ? e.subject.replace(/^Follow-up request:\s*/i, "") : questionOfEmail.get(e.id)?.question ?? null);
+  const titleOf = (e: (typeof emails)[number]) => (e.subject ? e.subject.replace(/^(?:Follow-up request|Help request):\s*/i, "") : questionOfEmail.get(e.id)?.question ?? null);
   const emailCards = emails.filter((e) => titleOf(e));
   const emailShown = emailCards.slice(-15).reverse();
   const emailsHint = emails.length === 0 ? ""

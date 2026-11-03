@@ -275,6 +275,8 @@ ${context}
         const doneArticles = citedArticles.map((a) => ({ id: a.id, title: a.title, url: a.url, category: a.category }));
         const doneVideos = citedVideos.map((v) => ({ id: v.id, title: v.title, loom_url: v.loom_url, summary: v.summary }));
 
+        // No documented answer: the widget offers a ready-to-send message to support (DIS-234)
+        const gap = isKnowledgeGapAnswer(cleanAnswer);
         let questionId: number | null = null;
         try {
           questionId = repo.insertWidgetQuestion({
@@ -284,7 +286,7 @@ ${context}
             answer: cleanAnswer,
             articles: doneArticles.map((a) => ({ id: a.id, title: a.title, url: a.url })),
             ip_hash: ipHash,
-            status: isKnowledgeGapAnswer(cleanAnswer) ? "unanswered" : "ok",
+            status: gap ? "unanswered" : "ok",
           }, visitor);
         } catch { /* analytics logging is best-effort */ }
 
@@ -293,6 +295,7 @@ ${context}
           exchangeId,
           questionId,
           answer: cleanAnswer,
+          gap,
           articles: doneArticles,
           // Include the remaining context for debugging / future use but the widget UI hides them
           sources: sources.map((qa) => ({ id: qa.id, question: qa.question })),
