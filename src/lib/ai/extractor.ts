@@ -1,5 +1,6 @@
 import { generateJSON, generateJSONMultimodal } from "./provider";
 import type { RootCause } from "../db/index";
+import { redactQAFields } from "../redact";
 
 const ROOT_CAUSES: readonly RootCause[] = [
   "ui_friction",
@@ -67,6 +68,7 @@ Rules:
 - question_template: use [UPPERCASE] for each variable (PRODUCT, VERSION, COUNTRY, PLAN, ERROR, etc.)
 - question_variables: only variables with a concrete identifiable value
 - answer: the complete resolution narrative, include all technical details, exact values, settings, and steps. null if unresolved.
+- NEVER copy a password, temporary password, passcode, PIN, verification code, API key or token from the ticket into any field. Write "[temporary password redacted]" (or "[password redacted]") in its place and keep the rest of the sentence. These answers are reused for other customers.
 - resolution_steps: ordered list of the concrete actions taken by the support agent to resolve the issue. Be specific and actionable — include exact configurations, commands, URLs, or settings used. Empty array if unresolved.
 - channel: email | chat | phone | web_form | unknown
 - root_cause: pick exactly ONE of these seven values:
@@ -129,7 +131,7 @@ Return ONLY the JSON.`;
 
     const data = JSON.parse(cleaned);
 
-    return {
+    return redactQAFields({
       question: String(data.question ?? "").trim(),
       question_template: String(data.question_template ?? data.question ?? "").trim(),
       question_variables: Array.isArray(data.question_variables)
@@ -143,6 +145,6 @@ Return ONLY the JSON.`;
       channel: String(data.channel ?? "unknown"),
       summary: String(data.summary ?? "").trim(),
       root_cause: coerceRootCause(data.root_cause),
-    };
+    });
   }
 }
