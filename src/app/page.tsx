@@ -143,7 +143,7 @@ export default function Home() {
   // Widget gap queue tour (DIS-234): once per user, after the email reports tour
   useEffect(() => {
     if (!user || !toursLoaded || activeTour || showWhatsNew) return;
-    if (!completedTours.includes("email-reports-v1") || completedTours.includes("widget-gaps-v1")) return;
+    if (!completedTours.includes("email-reports-v1") || completedTours.includes("widget-gaps-v2")) return;
     const t = setTimeout(() => setActiveTour(createWidgetGapsTour({ openDashboard: () => setTab("dashboard") })), 1500);
     return () => clearTimeout(t);
   }, [user, toursLoaded, completedTours, activeTour, showWhatsNew]);
