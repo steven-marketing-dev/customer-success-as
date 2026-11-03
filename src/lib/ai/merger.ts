@@ -1,6 +1,7 @@
 import { generateJSON } from "./provider";
 import type { QAPair } from "../db/index";
 import type { ExtractedQA } from "./extractor";
+import { redactQAFields } from "../redact";
 
 export interface MergeResult {
   action: "merge" | "create";
@@ -58,6 +59,7 @@ Decide:
 1. If the new extraction is about the SAME question/issue as an existing entry → MERGE
    - Combine information: keep the most complete answer, add any new resolution steps (avoid duplicates), update resolved status
    - The merge should be ADDITIVE — never lose existing information
+   - Never write a password, temporary password, PIN, code or token value; keep "[temporary password redacted]" / "[password redacted]" as they are
 2. If it's a genuinely DIFFERENT question → CREATE a new entry
 
 Return JSON:
@@ -84,7 +86,7 @@ Return ONLY the JSON.`;
     return {
       action: "merge",
       merge_target_id: data.merge_target_id,
-      merged: {
+      merged: redactQAFields({
         question: String(data.merged.question ?? newQA.question),
         question_template: String(data.merged.question_template ?? newQA.question_template),
         question_variables: Array.isArray(data.merged.question_variables)
@@ -96,7 +98,7 @@ Return ONLY the JSON.`;
           : [],
         summary: String(data.merged.summary ?? newQA.summary),
         resolved: Boolean(data.merged.resolved),
-      },
+      }),
     };
   }
 
