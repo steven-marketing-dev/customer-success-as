@@ -108,10 +108,32 @@ export async function runWidgetReportsTick(log: (m: string) => void = console.lo
   }
 }
 
+/**
+ * With the job off, say so loudly if someone is waiting for reports (DIS-358: the first weekly
+ * report was skipped silently because the variable was never set in Coolify).
+ */
+function warnIfReportsExpected(): void {
+  let recipients = 0;
+  try {
+    recipients = new Repository(getDb()).listUsersWithWidgetReports().length;
+  } catch (err) {
+    console.error("[widget-reports] disabled, and could not check for recipients:", err);
+    return;
+  }
+  if (recipients > 0) {
+    console.error(
+      `[widget-reports] ERROR: disabled (WIDGET_REPORTS_ENABLED != 1) but ${recipients} user(s) have reports on; ` +
+      "no scheduled report will be sent. Set WIDGET_REPORTS_ENABLED=1 and redeploy."
+    );
+  } else {
+    console.log("[widget-reports] disabled (WIDGET_REPORTS_ENABLED != 1)");
+  }
+}
+
 export function scheduleWidgetReports() {
   if (process.env.NODE_ENV !== "production") return;
   if (process.env.WIDGET_REPORTS_ENABLED !== "1") {
-    console.log("[widget-reports] disabled (WIDGET_REPORTS_ENABLED != 1)");
+    warnIfReportsExpected();
     return;
   }
   const tick = () => { void runWidgetReportsTick(); };
