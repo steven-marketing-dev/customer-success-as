@@ -2717,6 +2717,16 @@ export class Repository {
     return this.createQAPair({ ticket_id: ticket.id, question, answer, summary: answer.slice(0, 300), resolved: true, channel: "widget" });
   }
 
+  /** True when a follow-up for this exchange and reason was already sent to support (DIS-412). */
+  hasWidgetFollowUp(installationId: number, exchangeId: string, reason: string): boolean {
+    return !!this.db.prepare(`
+      SELECT 1 FROM widget_events
+      WHERE installation_id = ? AND event_type = 'follow_up_request'
+        AND json_extract(metadata, '$.exchangeId') = ? AND json_extract(metadata, '$.reason') = ?
+      LIMIT 1
+    `).get(installationId, exchangeId, reason);
+  }
+
   /** All widget records in [start, end), for every installation. Feeds the usage report. */
   getWidgetReportRecords(start: number, end: number): {
     installations: Array<{ id: number; name: string }>;
