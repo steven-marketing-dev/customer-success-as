@@ -437,6 +437,11 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
 
   const syncLimit = parseInt(process.env.SYNC_LIMIT ?? "0", 10);
 
+  // The next incremental sync starts from when this fetch was made, not from when the run
+  // ends: a ticket that changes in HubSpot while the run is processing must be picked up next
+  // time (DIS-412). Re-fetching a ticket is harmless, the upsert is keyed by hubspot_id.
+  const fetchStartedAt = Math.floor(Date.now() / 1000);
+
   let rawTickets: Awaited<ReturnType<HubSpotClient["getTickets"]>>;
   try {
     rawTickets = await hubspot.getTickets({
@@ -651,7 +656,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
   // ── 5. Update state ────────────────────────────────────────────────────────
   repo.refreshCategoryCounts();
   repo.updateSyncState({
-    last_sync_at: Math.floor(Date.now() / 1000),
+    last_sync_at: fetchStartedAt,
     last_run_at: Math.floor(Date.now() / 1000),
     tickets_synced_total: (state.tickets_synced_total ?? 0) + newCount,
     qa_pairs_total: repo.countQAPairs(),
