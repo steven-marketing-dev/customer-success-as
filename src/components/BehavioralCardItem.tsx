@@ -222,6 +222,14 @@ export function BehavioralCardItem({ card, categories, onUpdate, onDelete }: Pro
                 ? card.category_name
                 : card.scope}
             </span>
+            {card.scope === "category" && card.category_id == null && (
+              <span
+                className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-red-100 text-red-700"
+                title="This rule lost its category, so the agent is not applying it. Edit the rule and pick a category."
+              >
+                needs a category
+              </span>
+            )}
             {card.source === "suggested" && (
               <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">
                 auto-suggested

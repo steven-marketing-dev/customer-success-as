@@ -410,9 +410,39 @@ export class Repository {
     }
   }
 
-  clearAllCategoryAssignments(): void {
-    this.db.prepare("DELETE FROM qa_category_map").run();
-    this.db.prepare("DELETE FROM categories").run();
+  /**
+   * Swap in a new taxonomy in one transaction (DIS-412). Only the Q&A in `assignments` are
+   * re-assigned; any other Q&A keeps its category. Categories are matched by name so their ids
+   * survive, and a category is deleted only when no Q&A and no behavioral rule uses it: a
+   * category-scoped rule never loses its category to a re-cluster.
+   */
+  applyTaxonomy(assignments: Array<{ qaId: number; name: string; description?: string | null; confidence: number }>): void {
+    const clear = this.db.prepare("DELETE FROM qa_category_map WHERE qa_id = ?");
+    const describe = this.db.prepare("UPDATE categories SET description = ?, updated_at = unixepoch() WHERE id = ? AND ? IS NOT NULL");
+    this.db.transaction(() => {
+      const ids = new Map<string, number>();
+      for (const a of assignments) {
+        let id = ids.get(a.name);
+        if (id == null) {
+          id = this.getOrCreateCategory(a.name, a.description ?? undefined).id;
+          describe.run(a.description ?? null, id, a.description ?? null);
+          ids.set(a.name, id);
+        }
+        clear.run(a.qaId);
+        this.assignCategory(a.qaId, id, a.confidence);
+      }
+      this.deleteUnusedCategories();
+      this.refreshCategoryCounts();
+    })();
+  }
+
+  /** Delete categories that no Q&A and no behavioral rule points to. */
+  deleteUnusedCategories(): void {
+    this.db.prepare(`
+      DELETE FROM categories
+      WHERE id NOT IN (SELECT category_id FROM qa_category_map)
+        AND id NOT IN (SELECT category_id FROM behavioral_cards WHERE category_id IS NOT NULL)
+    `).run();
   }
 
   getCategorySummary(): Array<{
