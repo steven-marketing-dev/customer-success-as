@@ -3,6 +3,7 @@ import { Repository } from "@/lib/db/repository";
 import { getDb } from "@/lib/db/index";
 import { corsHeaders, resolveInstallation, extractClientIp, hashIp, checkAndRecordRate, readWidgetContext } from "@/lib/widget-auth";
 import { isValidEmail, isWidgetIntakeConfigured, submitWidgetIntake } from "@/lib/widget-intake";
+import { dedupeKey, runOnce } from "@/lib/dedupe";
 
 const MAX_SUBJECT = 200;
 const MAX_DESCRIPTION = 6000;
@@ -59,21 +60,25 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { via, ticketId } = await submitWidgetIntake({ installation, subject, description, email, sourceUrl, sessionId: visitor.session_id });
+    // The same message from the same visitor within 30 seconds (a double submit or a network
+    // retry) is sent once (DIS-412). A different message goes through; a failed send stays retryable.
+    await runOnce(dedupeKey("widget-ticket", installation.id, email.toLowerCase(), subject, description), async () => {
+      const { via, ticketId } = await submitWidgetIntake({ installation, subject, description, email, sourceUrl, sessionId: visitor.session_id });
 
-    // Record the submission as an analytics event (best-effort, never blocks the response)
-    try {
-      const repo = new Repository(getDb());
-      repo.recordWidgetEvent({
-        installation_id: installation.id,
-        event_type: "email_submit",
-        source_url: sourceUrl,
-        ip_hash: ipHash,
-        metadata: { subject, visitorEmail: email, via, ...(ticketId ? { ticketId } : {}) },
-      }, { ...visitor, user_email: visitor.user_email ?? email.toLowerCase() });
-    } catch (e) {
-      console.warn("[widget/ticket] event record failed:", e);
-    }
+      // Record the submission as an analytics event (best-effort, never blocks the response)
+      try {
+        const repo = new Repository(getDb());
+        repo.recordWidgetEvent({
+          installation_id: installation.id,
+          event_type: "email_submit",
+          source_url: sourceUrl,
+          ip_hash: ipHash,
+          metadata: { subject, visitorEmail: email, via, ...(ticketId ? { ticketId } : {}) },
+        }, { ...visitor, user_email: visitor.user_email ?? email.toLowerCase() });
+      } catch (e) {
+        console.warn("[widget/ticket] event record failed:", e);
+      }
+    });
 
     return new Response(JSON.stringify({ ok: true }), {
       headers: { "Content-Type": "application/json", ...cors },

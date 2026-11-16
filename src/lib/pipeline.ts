@@ -31,7 +31,16 @@ export interface PipelineOptions {
   mode: "incremental" | "full" | "recluster" | "test" | "scrape-kb" | "extract-loom" | "backfill-associations" | "backfill-root-cause";
   testLimit?: number;
   onProgress?: (event: PipelineEvent) => void;
+  /** Stand-ins for the external clients (tests). */
+  deps?: {
+    hubspot?: Pick<HubSpotClient, "getTickets" | "getTicketAssociations" | "getTicketConversation">;
+    extractor?: QAExtractor;
+    categorizer?: ReclusterCategorizer;
+  };
 }
+
+/** The part of Categorizer the re-cluster needs. */
+export type ReclusterCategorizer = Pick<Categorizer, "categorizeSingle" | "reclusterAll">;
 
 export async function runPipeline(options: PipelineOptions): Promise<PipelineStats> {
   const { mode, onProgress } = options;
@@ -48,9 +57,9 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
   };
 
   const repo = new Repository(getDb());
-  const hubspot = new HubSpotClient(process.env.HUBSPOT_ACCESS_TOKEN!);
-  const extractor = new QAExtractor();
-  const categorizer = new Categorizer();
+  const hubspot = options.deps?.hubspot ?? new HubSpotClient(process.env.HUBSPOT_ACCESS_TOKEN!);
+  const extractor = options.deps?.extractor ?? new QAExtractor();
+  const categorizer = options.deps?.categorizer ?? new Categorizer();
 
   // ── Recluster mode: only re-cluster ──────────────────────────────────────
   if (mode === "recluster") {
@@ -428,6 +437,12 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
 
   const syncLimit = parseInt(process.env.SYNC_LIMIT ?? "0", 10);
 
+  // The next incremental sync starts from when this fetch was made, not from when the run
+  // ends: a ticket that changes in HubSpot while the run is processing must be picked up next
+  // time (DIS-412). Re-fetching a ticket is harmless, the upsert is keyed by hubspot_id.
+  // Five minutes of overlap cover HubSpot's search index lagging behind a change.
+  const fetchStartedAt = Math.floor(Date.now() / 1000) - 5 * 60;
+
   let rawTickets: Awaited<ReturnType<HubSpotClient["getTickets"]>>;
   try {
     rawTickets = await hubspot.getTickets({
@@ -642,7 +657,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
   // ── 5. Update state ────────────────────────────────────────────────────────
   repo.refreshCategoryCounts();
   repo.updateSyncState({
-    last_sync_at: Math.floor(Date.now() / 1000),
+    last_sync_at: fetchStartedAt,
     last_run_at: Math.floor(Date.now() / 1000),
     tickets_synced_total: (state.tickets_synced_total ?? 0) + newCount,
     qa_pairs_total: repo.countQAPairs(),
@@ -657,30 +672,34 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
   return stats;
 }
 
-async function executeRecluster(
+/**
+ * Re-cluster every Q&A in `all` (DIS-412). The new taxonomy is worked out first, entirely in
+ * memory; nothing is written until it is complete, and then it is applied in one transaction.
+ * If the AI call fails or the process restarts, the stored categories stay as they were.
+ */
+export async function executeRecluster(
   repo: Repository,
-  categorizer: Categorizer,
+  categorizer: ReclusterCategorizer,
   all: ReturnType<Repository["getAllQAWithCategories"]>,
   log: (msg: string) => void
 ): Promise<void> {
   log(`Analyzing ${all.length} Q&A pairs for new taxonomy...`);
-  repo.clearAllCategoryAssignments();
 
   const result = await categorizer.reclusterAll(all);
 
-  const bulkAssigned = result.categories.reduce((sum, c) => sum + c.qa_ids.length, 0);
-  log(`✓ Taxonomy created: ${result.categories.length} categories, ${bulkAssigned}/${all.length} Q&A assigned`);
-
+  const known = new Set(all.map((qa) => qa.id));
+  const assignments: Array<{ qaId: number; name: string; description?: string | null; confidence: number }> = [];
+  const taxonomy = new Map<string, { name: string; description: string | null; count: number }>();
   for (const cat of result.categories) {
-    if (!cat.qa_ids.length) continue;
-    const category = repo.getOrCreateCategory(cat.name, cat.description);
-    for (const qaId of cat.qa_ids) {
-      repo.assignCategory(qaId, category.id, 1.0);
-    }
-    log(`  • ${cat.name} (${cat.qa_ids.length})`);
+    const qaIds = cat.qa_ids.filter((id) => known.has(id));
+    if (!qaIds.length) continue;
+    taxonomy.set(cat.name, { name: cat.name, description: cat.description, count: qaIds.length });
+    for (const qaId of qaIds) assignments.push({ qaId, name: cat.name, description: cat.description, confidence: 1.0 });
+    log(`  • ${cat.name} (${qaIds.length})`);
   }
+  log(`✓ Taxonomy created: ${taxonomy.size} categories, ${assignments.length}/${all.length} Q&A assigned`);
 
-  // Individually categorize any QAs that recluster missed
+  // Individually categorize any QAs that recluster missed, against the new taxonomy
   if (result.unassignedIds.length > 0) {
     const total = result.unassignedIds.length;
     log(`  ${total} Q&A not assigned by recluster — categorizing individually (concurrency: 15)...`);
@@ -692,12 +711,6 @@ async function executeRecluster(
       if (!qa) { done++; return; }
 
       try {
-        const existingCats = repo.getAllCategories().map((c) => ({
-          name: c.name,
-          description: c.description,
-          count: c.qa_count,
-        }));
-
         const catResult = await categorizer.categorizeSingle(
           {
             question: qa.question,
@@ -705,24 +718,24 @@ async function executeRecluster(
             answer: qa.answer,
             resolved: !!qa.resolved,
           },
-          existingCats
+          [...taxonomy.values()]
         );
-
-        const category = repo.getOrCreateCategory(
-          catResult.category_name,
-          catResult.category_description
-        );
-        repo.assignCategory(qa.id, category.id, catResult.confidence);
+        const entry = taxonomy.get(catResult.category_name)
+          ?? { name: catResult.category_name, description: catResult.category_description ?? null, count: 0 };
+        entry.count++;
+        taxonomy.set(entry.name, entry);
+        assignments.push({ qaId: qa.id, name: entry.name, description: entry.description, confidence: catResult.confidence });
         done++;
         log(`    ✓ [${done}/${total}] Q&A #${qaId} → ${catResult.category_name}`);
       } catch {
+        // Keeps the category it had
         done++;
         log(`    ✗ [${done}/${total}] Could not categorize Q&A #${qaId}`);
       }
     }, 15);
   }
 
-  repo.refreshCategoryCounts();
+  repo.applyTaxonomy(assignments);
 }
 
 // Lower concurrency for Claude to avoid rate limits (10k input tokens/min on free tier)

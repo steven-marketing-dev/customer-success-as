@@ -27,7 +27,7 @@ export interface BehavioralCardData {
 
 interface Props {
   card: BehavioralCardData;
-  categories: Array<{ id: number; name: string }>;
+  categories: Array<{ id: number; name: string; qa_count?: number }>;
   onUpdate?: (updated: BehavioralCardData) => void;
   onDelete?: (id: number) => void;
 }
@@ -222,6 +222,22 @@ export function BehavioralCardItem({ card, categories, onUpdate, onDelete }: Pro
                 ? card.category_name
                 : card.scope}
             </span>
+            {card.scope === "category" && card.category_id == null && (
+              <span
+                className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-red-100 text-red-700"
+                title="This rule lost its category, so the agent is not applying it. Edit the rule and pick a category."
+              >
+                needs a category
+              </span>
+            )}
+            {card.scope === "category" && card.category_id != null && categories.find((c) => c.id === card.category_id)?.qa_count === 0 && (
+              <span
+                className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-red-100 text-red-700"
+                title="No Q&A is in this category any more (a re-cluster renamed or dropped it), so the agent is not applying this rule. Edit the rule and pick the category that replaced it."
+              >
+                category has no Q&A
+              </span>
+            )}
             {card.source === "suggested" && (
               <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">
                 auto-suggested

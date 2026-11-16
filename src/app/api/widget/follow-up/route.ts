@@ -3,6 +3,7 @@ import { Repository } from "@/lib/db/repository";
 import { getDb } from "@/lib/db/index";
 import { corsHeaders, resolveInstallation, extractClientIp, hashIp, checkAndRecordRate, readWidgetContext } from "@/lib/widget-auth";
 import { isValidEmail, isWidgetIntakeConfigured, submitWidgetIntake } from "@/lib/widget-intake";
+import { dedupeKey, runOnce } from "@/lib/dedupe";
 
 /**
  * Sends a widget exchange to support the same way as the widget email form (a HubSpot ticket)
@@ -65,6 +66,12 @@ export async function POST(req: NextRequest) {
   if (noAnswer && !message) return json({ error: "Missing message" }, 400);
 
   const visitor = readWidgetContext(body);
+  const reason = noAnswer ? "no_answer" : "not_helpful";
+  // One ticket per exchange and reason (DIS-412): a retry or a second tab must not open another
+  // HubSpot ticket. Already sent → answer ok without sending again.
+  try {
+    if (new Repository(getDb()).hasWidgetFollowUp(installation.id, exchangeId, reason)) return json({ ok: true, duplicate: true });
+  } catch { /* best-effort: fall through and send */ }
   // Earlier questions in the same chat, from what the widget stored (not from the client)
   let earlier: Array<{ question: string; answer: string }> = [];
   try { earlier = new Repository(getDb()).getWidgetExchangeContext(installation.id, exchangeId)?.earlier ?? []; } catch { /* best-effort */ }
@@ -89,22 +96,25 @@ export async function POST(req: NextRequest) {
       ]).join("\n").trim();
 
   try {
-    const { via, ticketId } = await submitWidgetIntake({
-      installation, subject, description, email, sourceUrl, sessionId: visitor.session_id,
-      origin: noAnswer ? "Sent after the help assistant had no answer" : "Requested after rating an answer Not helpful",
+    // Two requests for the same exchange arriving together share one send; a failed send stays retryable
+    const { duplicate } = await runOnce(dedupeKey("widget-follow-up", installation.id, exchangeId, reason), async () => {
+      const { via, ticketId } = await submitWidgetIntake({
+        installation, subject, description, email, sourceUrl, sessionId: visitor.session_id,
+        origin: noAnswer ? "Sent after the help assistant had no answer" : "Requested after rating an answer Not helpful",
+      });
+      try {
+        new Repository(getDb()).recordWidgetEvent({
+          installation_id: installation.id,
+          event_type: "follow_up_request",
+          source_url: sourceUrl,
+          ip_hash: ipHash,
+          metadata: { subject, visitorEmail: email, via, exchangeId, reason, ...(ticketId ? { ticketId } : {}) },
+        }, { ...visitor, user_email: visitor.user_email ?? email.toLowerCase() });
+      } catch (e) {
+        console.warn("[widget/follow-up] event record failed:", e);
+      }
     });
-    try {
-      new Repository(getDb()).recordWidgetEvent({
-        installation_id: installation.id,
-        event_type: "follow_up_request",
-        source_url: sourceUrl,
-        ip_hash: ipHash,
-        metadata: { subject, visitorEmail: email, via, exchangeId, reason: noAnswer ? "no_answer" : "not_helpful", ...(ticketId ? { ticketId } : {}) },
-      }, { ...visitor, user_email: visitor.user_email ?? email.toLowerCase() });
-    } catch (e) {
-      console.warn("[widget/follow-up] event record failed:", e);
-    }
-    return json({ ok: true });
+    return json(duplicate ? { ok: true, duplicate: true } : { ok: true });
   } catch (e) {
     console.error("[widget/follow-up] submission failed:", e);
     return json({ error: "Could not send your request. Please try again later." }, 502);

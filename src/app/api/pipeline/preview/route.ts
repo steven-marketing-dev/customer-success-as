@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
 import { HubSpotClient } from "@/lib/hubspot";
 import { Repository } from "@/lib/db/repository";
 import { getDb } from "@/lib/db/index";
@@ -7,6 +8,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
+  const denied = requireUser(req);
+  if (denied) return denied;
+
   const { mode = "incremental" } = await req.json() as { mode?: string };
 
   if (!["incremental", "full"].includes(mode)) {

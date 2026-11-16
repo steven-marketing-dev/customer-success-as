@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
 import { Repository } from "@/lib/db/repository";
 
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; sectionId: string }> }
 ) {
+  const denied = requireUser(req);
+  if (denied) return denied;
+
   const { sectionId } = await params;
   const sid = parseInt(sectionId, 10);
   const repo = new Repository();
@@ -24,6 +28,9 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string; sectionId: string }> }
 ) {
+  const denied = requireUser(_req);
+  if (denied) return denied;
+
   const { sectionId } = await params;
   const repo = new Repository();
   repo.deleteRefDocSection(parseInt(sectionId, 10));

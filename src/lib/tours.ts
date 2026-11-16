@@ -124,6 +124,30 @@ export function createWidgetGapsTour(actions: { openDashboard: () => void }): To
   };
 }
 
+/** Background jobs status (DIS-412): KB sync and widget reports, on the Pipeline tab (admins). */
+export function createBackgroundJobsTour(actions: { openPipeline: () => void }): TourDefinition {
+  return {
+    key: "background-jobs-v1",
+    name: "Background Jobs",
+    steps: [
+      {
+        title: "What runs on its own",
+        description: "The knowledge base sync and the widget usage reports run by themselves. This box shows when each one last ran and how it went, so you don't have to guess whether an article update or a report went out.",
+        target: '[data-tour="pipeline-background-jobs"]',
+        position: "bottom",
+        beforeStep: actions.openPipeline,
+        waitForDom: true,
+      },
+      {
+        title: "Problems show up in red",
+        description: "A failed sync, a report that could not be sent or reports that are switched off while someone expects them appear here in red. In Agent > Rules, a rule marked \"needs a category\" or \"category has no Q&A\" is not being applied: edit it and pick a category.",
+        target: '[data-tour="pipeline-background-jobs"]',
+        position: "bottom",
+      },
+    ],
+  };
+}
+
 /** Registry of all available tours */
-export const TOUR_KEYS = ["video-guides-v1", "email-reports-v1", "widget-gaps-v2"] as const;
+export const TOUR_KEYS = ["video-guides-v1", "email-reports-v1", "widget-gaps-v2", "background-jobs-v1"] as const;
 export type TourKey = (typeof TOUR_KEYS)[number];

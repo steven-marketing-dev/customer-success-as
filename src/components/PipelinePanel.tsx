@@ -184,6 +184,8 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
 
   return (
     <div className="space-y-5">
+      <BackgroundJobsStatus refreshKey={status} />
+
       {/* Running indicator */}
       {status === "running" && (
         <div className="flex items-center gap-2 text-sm text-mint-600 bg-mint-50 border border-mint-100 rounded-xl px-4 py-2.5">
@@ -349,6 +351,60 @@ export function PipelinePanel({ onDone }: { onDone?: () => void }) {
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+interface AppStatus {
+  warnings: string[];
+  commit: string | null;
+  kb_sync: { configured: boolean; last: { at: number; ok: boolean; created?: number; updated?: number; deleted?: number; error?: string } | null; articles: number };
+  widget_reports: { enabled: boolean; recipients: number; last_tick_at: number | null; failed_last_7d: number; stuck_sending: number };
+}
+
+function ago(unixSeconds: number): string {
+  const minutes = Math.max(0, Math.floor((Date.now() / 1000 - unixSeconds) / 60));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 48 * 60) return `${Math.floor(minutes / 60)} h ago`;
+  return `${Math.floor(minutes / 1440)} days ago`;
+}
+
+/** The jobs that run on their own (KB sync, widget reports), from GET /api/status (DIS-412). */
+function BackgroundJobsStatus({ refreshKey }: { refreshKey: string }) {
+  const [data, setData] = useState<AppStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/status")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [refreshKey]);
+
+  if (!data) return null;
+  const kb = data.kb_sync;
+  const reports = data.widget_reports;
+  const kbText = !kb.configured
+    ? "not configured (Scrape KB reads the sitemap)"
+    : !kb.last
+      ? "no run recorded yet"
+      : kb.last.ok
+        ? `last run ${ago(kb.last.at)} (${kb.last.created ?? 0} new, ${kb.last.updated ?? 0} updated, ${kb.last.deleted ?? 0} removed)`
+        : `last run ${ago(kb.last.at)} failed`;
+  const reportsText = !reports.enabled
+    ? "off"
+    : `on, ${reports.recipients} recipient${reports.recipients === 1 ? "" : "s"}${reports.last_tick_at ? `, checked ${ago(reports.last_tick_at)}` : ""}`;
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 text-xs text-slate-600 space-y-1" data-tour="pipeline-background-jobs">
+      <p><span className="font-medium text-slate-700">KB sync:</span> {kbText} · {kb.articles} articles</p>
+      <p><span className="font-medium text-slate-700">Widget reports:</span> {reportsText}</p>
+      {data.warnings.map((w) => (
+        <p key={w} className="text-red-600">{w}</p>
+      ))}
+      {data.commit && <p className="text-slate-400">Build {data.commit.slice(0, 7)}</p>}
     </div>
   );
 }

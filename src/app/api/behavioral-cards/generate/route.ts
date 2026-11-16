@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
 import { generateJSON } from "@/lib/ai/provider";
 
 export async function POST(req: NextRequest) {
+  const denied = requireUser(req);
+  if (denied) return denied;
+
   const body = await req.json() as {
     title: string;
     type: "knowledge" | "solution" | "general";

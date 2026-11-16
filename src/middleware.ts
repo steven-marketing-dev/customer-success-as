@@ -9,6 +9,7 @@ const PUBLIC_PATHS = [
   "/api/auth/gmail/callback",
   "/api/agent/answer",
   "/api/kb/sync",
+  "/api/status",
   "/api/mcp",
   "/api/widget",
   "/embed",

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
 import { Repository } from "@/lib/db/repository";
 import { rebuildFtsIndexes } from "@/lib/db/index";
 import { fetchGoogleDoc } from "@/lib/gdoc-importer";
@@ -7,6 +8,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const denied = requireUser(req);
+  if (denied) return denied;
+
   const { id } = await params;
   const docId = parseInt(id, 10);
   const repo = new Repository();
@@ -37,6 +41,9 @@ export async function PUT(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const denied = requireUser(_req);
+  if (denied) return denied;
+
   const { id } = await params;
   const docId = parseInt(id, 10);
   const repo = new Repository();

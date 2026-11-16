@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
 import { Repository } from "@/lib/db/repository";
 
 export async function GET() {
@@ -8,6 +9,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const denied = requireUser(req);
+  if (denied) return denied;
+
   const body = await req.json() as { name: string; definition: string; aliases?: string[] };
   if (!body.name?.trim() || !body.definition?.trim()) {
     return NextResponse.json({ error: "Name and definition are required" }, { status: 400 });

@@ -1,6 +1,7 @@
 import { Repository } from "./db/repository";
 import { getDb, rebuildFtsIndexes } from "./db/index";
 import { BASE_URL, articleHtmlToText, computeHash } from "./scraper";
+import { acquireJob, releaseJob } from "./locks";
 
 /**
  * Incremental KB sync from the Product Fruits Knowledge Base API.
@@ -103,20 +104,55 @@ async function pfGet<T>(path: string): Promise<T> {
   }
 }
 
-let running: Promise<PFSyncStats> | null = null;
+declare global {
+  // eslint-disable-next-line no-var
+  var __kbSyncRun: { promise: Promise<PFSyncStats>; dryRun: boolean } | undefined;
+}
 
-/** Runs the sync; concurrent callers (cron, API route, Pipeline button) share the run in progress. */
-export function syncFromProductFruits(
+/**
+ * Runs the sync, one at a time for the whole process (cron, API route, Pipeline button): the
+ * run in progress is kept on `global` because a module variable is not shared between the
+ * scheduled job and the routes (DIS-412).
+ *
+ * A caller that finds a run in progress shares it, except a real sync that finds a dry run:
+ * the dry run writes nothing, so the real one waits for it and then runs.
+ */
+export async function syncFromProductFruits(
   opts: { dryRun?: boolean; onLog?: (message: string) => void } = {},
 ): Promise<PFSyncStats> {
-  if (running) {
-    opts.onLog?.("A Product Fruits sync is already running — waiting for it.");
-    return running;
+  const dryRun = !!opts.dryRun;
+  for (;;) {
+    const current = global.__kbSyncRun;
+    if (!current) break;
+    if (dryRun || !current.dryRun) {
+      opts.onLog?.("A Product Fruits sync is already running — waiting for it.");
+      return current.promise;
+    }
+    opts.onLog?.("A Product Fruits dry run is in progress — running the real sync after it.");
+    await current.promise.catch(() => {});
   }
-  running = runSync(opts).finally(() => {
-    running = null;
-  });
-  return running;
+  acquireJob("kb-sync");
+  const promise = runSync(opts)
+    .then((stats) => { recordLastSync({ ok: true, dryRun, stats }); return stats; })
+    .catch((err) => { recordLastSync({ ok: false, dryRun, error: err instanceof Error ? err.message : String(err) }); throw err; })
+    .finally(() => {
+      global.__kbSyncRun = undefined;
+      releaseJob("kb-sync");
+    });
+  global.__kbSyncRun = { promise, dryRun };
+  return promise;
+}
+
+/** Outcome of the last sync, read by GET /api/status. Dry runs are not recorded. */
+function recordLastSync(result: { ok: boolean; dryRun: boolean; stats?: PFSyncStats; error?: string }): void {
+  if (result.dryRun) return;
+  try {
+    new Repository(getDb()).setAppMeta("kb_sync_last", JSON.stringify({
+      at: Math.floor(Date.now() / 1000), ok: result.ok,
+      ...(result.stats ? { created: result.stats.created, updated: result.stats.updated, deleted: result.stats.deleted, failed: result.stats.failed } : {}),
+      ...(result.error ? { error: result.error.slice(0, 500) } : {}),
+    }));
+  } catch { /* status is best-effort */ }
 }
 
 async function runSync(opts: { dryRun?: boolean; onLog?: (message: string) => void }): Promise<PFSyncStats> {

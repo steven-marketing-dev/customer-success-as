@@ -23,6 +23,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATABASE_PATH=./data/kb.db
+# Commit this image was built from; GET /api/status returns it so a deploy can be verified
+ARG GIT_SHA
+ENV GIT_SHA=$GIT_SHA
 
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
