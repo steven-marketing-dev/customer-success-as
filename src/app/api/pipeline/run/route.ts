@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
 import { runPipeline } from "@/lib/pipeline";
 import {
   getJobState,
@@ -8,11 +9,15 @@ import {
   finishJob,
   failJob,
 } from "@/lib/jobRunner";
+import { acquireJob, releaseJob, isJobRunning } from "@/lib/locks";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 5; // Returns immediately after starting
 
 export async function POST(req: NextRequest) {
+  const denied = requireUser(req);
+  if (denied) return denied;
+
   const { mode = "incremental", testLimit } = await req.json() as { mode?: string; testLimit?: number };
 
   if (!["incremental", "full", "recluster", "test", "scrape-kb", "extract-loom", "backfill-associations", "backfill-root-cause"].includes(mode)) {
@@ -22,6 +27,9 @@ export async function POST(req: NextRequest) {
   const state = getJobState();
   if (state.status === "running") {
     return NextResponse.json({ error: "Pipeline already running" }, { status: 409 });
+  }
+  if (isJobRunning("db-clear") || !acquireJob("pipeline")) {
+    return NextResponse.json({ error: "Another job is running. Try again when it finishes." }, { status: 409 });
   }
 
   startJob(mode);
@@ -38,6 +46,8 @@ export async function POST(req: NextRequest) {
     },
   }).catch((err) => {
     failJob(String(err));
+  }).finally(() => {
+    releaseJob("pipeline");
   });
 
   return NextResponse.json({ ok: true });

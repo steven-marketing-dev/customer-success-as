@@ -350,10 +350,15 @@ export default function Home() {
   }, []);
 
   const clearDatabase = useCallback(async () => {
-    if (!confirm("Clear all data from the database? This cannot be undone.")) return;
+    if (!confirm("Delete all tickets, Q&A pairs and categories? Glossary, articles, rules and widget data stay. This cannot be undone.")) return;
     setClearing(true);
     try {
-      await fetch("/api/db/clear", { method: "POST" });
+      const res = await fetch("/api/db/clear", { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        alert(body.error ?? "Could not clear the database.");
+        return;
+      }
       await fetchData(true);
     } finally {
       setClearing(false);

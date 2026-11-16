@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
 import { Repository } from "@/lib/db/repository";
 
 export async function GET(
@@ -19,6 +20,9 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const denied = requireUser(req);
+  if (denied) return denied;
+
   const { id } = await params;
   const termId = parseInt(id, 10);
   const repo = new Repository();
@@ -44,6 +48,9 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const denied = requireUser(_req);
+  if (denied) return denied;
+
   const { id } = await params;
   const repo = new Repository();
   const term = repo.getTermById(parseInt(id, 10));

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
 import { Repository } from "@/lib/db/repository";
 import { rebuildFtsIndexes } from "@/lib/db/index";
 import { fetchGoogleDoc } from "@/lib/gdoc-importer";
@@ -10,6 +11,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const denied = requireUser(req);
+  if (denied) return denied;
+
   const body = await req.json() as {
     title: string;
     source_type: "google_doc" | "manual";
