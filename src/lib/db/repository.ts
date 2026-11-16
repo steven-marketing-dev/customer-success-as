@@ -2548,21 +2548,42 @@ export class Repository {
     ).get(userId, periodDays, periodEnd) as WidgetReportSend | undefined;
   }
 
+  /** The send for a (user, length, local end date): the date, not the instant, identifies a period (DIS-412). */
+  getWidgetReportSendByDate(userId: number, periodDays: number, periodEndDate: string): WidgetReportSend | undefined {
+    return this.db.prepare(
+      "SELECT * FROM widget_report_sends WHERE user_id = ? AND period_days = ? AND period_end_date = ?"
+    ).get(userId, periodDays, periodEndDate) as WidgetReportSend | undefined;
+  }
+
   /** Claim a (user, length, period) slot. Returns false when another run already owns it. */
-  claimWidgetReportSend(userId: number, periodDays: number, periodStart: number, periodEnd: number): boolean {
+  claimWidgetReportSend(userId: number, periodDays: number, periodStart: number, periodEnd: number, periodEndDate: string): boolean {
     const info = this.db.prepare(
-      `INSERT OR IGNORE INTO widget_report_sends (user_id, period_days, period_start, period_end, status)
-       VALUES (?, ?, ?, ?, 'sending')`
-    ).run(userId, periodDays, periodStart, periodEnd);
+      `INSERT OR IGNORE INTO widget_report_sends (user_id, period_days, period_start, period_end, period_end_date, status, claimed_at)
+       VALUES (?, ?, ?, ?, ?, 'sending', unixepoch())`
+    ).run(userId, periodDays, periodStart, periodEnd, periodEndDate);
     return info.changes === 1;
   }
 
-  /** Re-claim a failed slot for a retry (attempts + 1). Returns false if it is no longer failed. */
-  retryWidgetReportSend(id: number): boolean {
+  /**
+   * Re-claim a slot for a retry (attempts + 1): a failed one, or one left in 'sending' for more
+   * than `staleSeconds` because the process died mid-send (DIS-412). Returns false if another
+   * run got there first.
+   */
+  retryWidgetReportSend(id: number, staleSeconds: number): boolean {
     const info = this.db.prepare(
-      "UPDATE widget_report_sends SET status = 'sending', attempts = attempts + 1, error = NULL WHERE id = ? AND status = 'failed'"
-    ).run(id);
+      `UPDATE widget_report_sends SET status = 'sending', attempts = attempts + 1, error = NULL, claimed_at = unixepoch()
+       WHERE id = ? AND (status = 'failed' OR (status = 'sending' AND COALESCE(claimed_at, created_at) <= unixepoch() - ?))`
+    ).run(id, staleSeconds);
     return info.changes === 1;
+  }
+
+  /** Report sends that need attention: failed, or stuck in 'sending' for more than `staleSeconds`. */
+  countWidgetReportProblems(since: number, staleSeconds: number): { failed: number; stuck: number } {
+    return this.db.prepare(`
+      SELECT COALESCE(SUM(status = 'failed'), 0) AS failed,
+             COALESCE(SUM(status = 'sending' AND COALESCE(claimed_at, created_at) <= unixepoch() - ?), 0) AS stuck
+      FROM widget_report_sends WHERE created_at >= ?
+    `).get(staleSeconds, since) as { failed: number; stuck: number };
   }
 
   finishWidgetReportSend(id: number, ok: boolean, error: string | null): void {

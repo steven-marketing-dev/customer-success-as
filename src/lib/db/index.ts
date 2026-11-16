@@ -366,11 +366,22 @@ export interface WidgetReportSend {
   period_days: number;
   period_start: number;
   period_end: number;
+  /** Local date (YYYY-MM-DD) the period ended on, in the recipient's timezone: the idempotency key. */
+  period_end_date: string | null;
+  /** When the row was last claimed for sending; a 'sending' row older than 15 min is retried. */
+  claimed_at: number | null;
   status: "sending" | "sent" | "failed";
   attempts: number;
   error: string | null;
   sent_at: number | null;
   created_at: number;
+}
+
+/** The local calendar date (YYYY-MM-DD) of a unix timestamp in `tz` (Los Angeles when unset or invalid). */
+export function localDateString(unixSeconds: number, tz: string | null | undefined): string {
+  const format = (timeZone: string) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(unixSeconds * 1000));
+  try { return format(tz || "America/Los_Angeles"); } catch { return format("America/Los_Angeles"); }
 }
 
 // Singleton DB connection
@@ -815,6 +826,8 @@ function initDb(db: Database.Database) {
     "ALTER TABLE widget_questions ADD COLUMN status TEXT NOT NULL DEFAULT 'ok'",
     "ALTER TABLE widget_hubspot_tickets ADD COLUMN subject TEXT",
     "ALTER TABLE widget_hubspot_tickets ADD COLUMN visitor_email TEXT",
+    "ALTER TABLE widget_report_sends ADD COLUMN period_end_date TEXT",
+    "ALTER TABLE widget_report_sends ADD COLUMN claimed_at INTEGER",
     ...["widget_questions", "widget_ratings", "widget_events", "widget_article_clicks"].flatMap((t) => [
       `ALTER TABLE ${t} ADD COLUMN session_id TEXT`,
       `ALTER TABLE ${t} ADD COLUMN user_email TEXT`,
@@ -834,6 +847,19 @@ function initDb(db: Database.Database) {
   try {
     db.prepare("INSERT OR IGNORE INTO app_meta (key, value) VALUES ('widget_tracking_v2_since', ?)")
       .run(String(Math.floor(Date.now() / 1000)));
+  } catch { /* table may not exist yet */ }
+
+  // Report sends are keyed by the local date the period ended on, so a timezone change does not
+  // look like a new period (DIS-412). Rows from before the column get the date their period_end
+  // falls on in the recipient's current timezone; the old UNIQUE(user, days, period_end) stays.
+  try {
+    const rows = db.prepare(`
+      SELECT s.id, s.period_end, u.timezone FROM widget_report_sends s JOIN users u ON u.id = s.user_id
+      WHERE s.period_end_date IS NULL
+    `).all() as Array<{ id: number; period_end: number; timezone: string | null }>;
+    const set = db.prepare("UPDATE OR IGNORE widget_report_sends SET period_end_date = ? WHERE id = ?");
+    for (const r of rows) set.run(localDateString(r.period_end, r.timezone), r.id);
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_widget_report_sends_date ON widget_report_sends(user_id, period_days, period_end_date) WHERE period_end_date IS NOT NULL");
   } catch { /* table may not exist yet */ }
 
   // Visitor emails read from HubSpot before the parser dropped mail clients' "<mailto:...>" suffix

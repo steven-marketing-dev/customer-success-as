@@ -13,7 +13,8 @@
  * WIDGET_REPORTS_ENABLED=1 turns it on (off by default; set 0 to stop it without a redeploy).
  */
 import { Repository } from "@/lib/db/repository";
-import { getDb, type User } from "@/lib/db/index";
+import { getDb, localDateString, type User } from "@/lib/db/index";
+import { acquireJob, releaseJob } from "@/lib/locks";
 import { syncWidgetMeetings, isCalendlyConfigured } from "@/lib/widget-meetings";
 import { syncWidgetTickets } from "@/lib/widget-tickets";
 import {
@@ -26,8 +27,9 @@ const TICK_MS = 60 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
 const SEND_WINDOW_SECONDS = 48 * 3600;
 const MEETING_SYNC_EVERY_SECONDS = 6 * 3600;
-
-let running = false;
+// A row still 'sending' after this long means the process died mid-send (a deploy restarts the
+// container): it is retried like a failure. The email may then arrive twice; a lost report is worse.
+export const STALE_SENDING_SECONDS = 15 * 60;
 
 export function userReportTimezone(user: Pick<User, "timezone">): string {
   return user.timezone && isValidTimezone(user.timezone) ? user.timezone : DEFAULT_REPORT_TIMEZONE;
@@ -58,21 +60,31 @@ async function maybeSyncMeetings(repo: Repository, force: boolean, log: (m: stri
 }
 
 export async function runWidgetReportsTick(log: (m: string) => void = console.log): Promise<void> {
-  if (running) return;
-  running = true;
+  // The lock is on `global`: the scheduled tick and a route may load separate copies of this module
+  if (!acquireJob("widget-reports")) return;
   try {
     const repo = new Repository(getDb());
     const now = Math.floor(Date.now() / 1000);
+    repo.setAppMeta("widget_reports_last_tick", String(now));
 
-    const due: Array<{ user: User; period: ReportPeriod; retryId: number | null }> = [];
+    const due: Array<{ user: User; period: ReportPeriod; endDate: string; retryId: number | null }> = [];
     for (const user of repo.listUsersWithWidgetReports()) {
       const tz = userReportTimezone(user);
       for (const days of enabledPeriods(user)) {
         const period = latestCompletedPeriod(days, tz);
         if (!period || now - period.end > SEND_WINDOW_SECONDS) continue;
-        const existing = repo.getWidgetReportSend(user.id, days, period.end);
-        if (!existing) due.push({ user, period, retryId: null });
-        else if (existing.status === "failed" && existing.attempts < MAX_ATTEMPTS) due.push({ user, period, retryId: existing.id });
+        // The period is identified by the local date it ended on, so changing the timezone
+        // (which moves `period.end` by a few hours) does not send the same report again
+        const endDate = localDateString(period.end, tz);
+        const existing = repo.getWidgetReportSendByDate(user.id, days, endDate);
+        if (!existing) { due.push({ user, period, endDate, retryId: null }); continue; }
+        const stale = existing.status === "sending" && now - (existing.claimed_at ?? existing.created_at) >= STALE_SENDING_SECONDS;
+        if (existing.status !== "failed" && !stale) continue;
+        if (existing.attempts < MAX_ATTEMPTS) due.push({ user, period, endDate, retryId: existing.id });
+        else if (stale) {
+          repo.finishWidgetReportSend(existing.id, false, "Interrupted while sending (process restarted); no attempts left");
+          console.error(`[widget-reports] ERROR: ${days}d report to user ${user.id} was interrupted and has no attempts left; send it with "Send report now"`);
+        }
       }
     }
 
@@ -81,16 +93,16 @@ export async function runWidgetReportsTick(log: (m: string) => void = console.lo
     await syncWidgetTickets({ onLog: (m) => log(`[hubspot-tickets] ${m}`) });
     if (due.length === 0) return;
     if (!isReportEmailConfigured()) {
-      log(`[widget-reports] ${due.length} report(s) due but SendGrid/REPORTS_FROM is not configured`);
+      console.error(`[widget-reports] ERROR: ${due.length} report(s) due but SendGrid/REPORTS_FROM is not configured; nothing was sent`);
       return;
     }
 
-    for (const { user, period, retryId } of due) {
+    for (const { user, period, endDate, retryId } of due) {
       const claimed = retryId != null
-        ? repo.retryWidgetReportSend(retryId)
-        : repo.claimWidgetReportSend(user.id, period.days, period.start, period.end);
+        ? repo.retryWidgetReportSend(retryId, STALE_SENDING_SECONDS)
+        : repo.claimWidgetReportSend(user.id, period.days, period.start, period.end, endDate);
       if (!claimed) continue;
-      const row = repo.getWidgetReportSend(user.id, period.days, period.end)!;
+      const row = repo.getWidgetReportSendByDate(user.id, period.days, endDate)!;
       try {
         await sendWidgetReport(repo, user, period);
         repo.finishWidgetReportSend(row.id, true, null);
@@ -99,12 +111,15 @@ export async function runWidgetReportsTick(log: (m: string) => void = console.lo
         const error = err instanceof Error ? err.message : String(err);
         repo.finishWidgetReportSend(row.id, false, error.slice(0, 1000));
         console.error(`[widget-reports] ${period.days}d report to user ${user.id} failed (attempt ${row.attempts}):`, error);
+        if (row.attempts >= MAX_ATTEMPTS) {
+          console.error(`[widget-reports] ERROR: ${period.days}d report to user ${user.id} gave up after ${MAX_ATTEMPTS} attempts; send it with "Send report now"`);
+        }
       }
     }
   } catch (err) {
     console.error("[widget-reports] tick failed:", err);
   } finally {
-    running = false;
+    releaseJob("widget-reports");
   }
 }
 
