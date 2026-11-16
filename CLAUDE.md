@@ -23,6 +23,7 @@ npm install
 cp .env.example .env.local
 # Edit .env.local with your keys
 npm run dev   # → http://localhost:3000
+npm test      # node:test + tsx; throwaway SQLite, mocked fetch, no keys needed (tests/setup.ts)
 ```
 
 ## Variables (.env.local)
@@ -67,6 +68,17 @@ AI_PROVIDER (claude|gemini), ANTHROPIC_API_KEY, GOOGLE_API_KEY, HUBSPOT_ACCESS_T
 - **"What's New" modal**: Highlights recent updates on login.
 - **User profile management**: Each user sets Calendly URL, Gmail connection, and other preferences in My Profile.
 
+## Jobs and state (DIS-412)
+
+- **One registry for "is a job running?"**: `src/lib/locks.ts`, kept on `global` like the DB handle. A module-level variable is NOT shared between `instrumentation` (scheduled jobs) and the API routes, so never guard a job with a module `let`. Names: `pipeline`, `kb-sync`, `widget-reports`, `db-clear`.
+- **KB sync**: one run at a time for cron, `/api/kb/sync` and the Pipeline button. A caller that finds a run in progress shares it, except a real sync that finds a dry run: it waits and then runs. The last real run is in `app_meta.kb_sync_last`.
+- **Re-cluster**: the new taxonomy is computed first and applied in one transaction (`Repository.applyTaxonomy`); a failure changes nothing. Categories are matched by name and a category is never deleted while a Q&A or a behavioral rule uses it, so category-scoped rules keep their category. A rule with `scope = 'category'` and no category shows "needs a category" in Rules and is not applied.
+- **Widget report sends**: identified by (user, length, local end date `period_end_date`), not by the instant. A row in `sending` for more than 15 minutes (process restarted mid-send) is retried like a failure, so after a restart a report can arrive twice; it is never lost silently. Three failed attempts, an interrupted send with no attempts left, and missing SendGrid config are logged as `ERROR` and show in `/api/status`.
+- **Sessions**: `requireAuth` checks that the user still exists and takes the role from `users`; the cookie alone (7-day JWT) is not enough. Every route that changes data calls `requireAuth` or `requireUser`.
+- **Clear DB**: master only, refused while a job runs. Deletes tickets, Q&A and categories; keeps categories a rule points to, reopens widget gaps whose answer was deleted, rebuilds FTS.
+- **Widget follow-up / email form**: one send per (exchange, reason) for follow-ups (checked against `widget_events`), and identical email-form submissions within 30 s are sent once (`src/lib/dedupe.ts`).
+- **Pipeline cursor**: `sync_state.last_sync_at` is the time the tickets were fetched, not the end of the run.
+
 ## Database tables
 
 tickets, qa_pairs, categories, qa_category_map, sync_state, terms, term_qa_map, kb_articles (with `source_id` for dedup), term_article_map, correction_logs, behavioral_cards, ref_docs, ref_doc_sections, process_cards, term_process_card_map, users, conversations, messages, message_ratings, tour_completions, widget_installations, widget_ratings, widget_rate_events, widget_events, widget_questions, widget_article_clicks, widget_meetings, calendly_events_seen, widget_report_sends, widget_hubspot_tickets, widget_gap_reviews, app_meta, gmail_tokens, clarity_metrics, insight_cache
@@ -81,6 +93,7 @@ tickets, qa_pairs, categories, qa_category_map, sync_state, terms, term_qa_map, 
 **KB sync (machine, `x-api-key` = N8N_API_KEY)**: `POST /api/kb/sync` `{ dryRun? }` — incremental sync from the Product Fruits KB API (`src/lib/productFruits.ts`); also scheduled every `KB_SYNC_INTERVAL_HOURS` (default 6) by `src/instrumentation-node.ts` in production
 **Conversations**: `/api/conversations`, `/api/conversations/[id]`, `/api/messages`
 **Auth/User**: `/api/auth/*`, `/api/tours`, `/api/db`
+**Status (session cookie or `x-api-key` = N8N_API_KEY)**: `GET /api/status` — commit being served (`GIT_SHA`, set at image build), schema applied, jobs running, last pipeline run / KB sync / widget report tick, failed or stuck report sends, `warnings`. No customer data. Use it to verify a deploy and to check the background jobs instead of reading container logs.
 **Widget (public)**: `/api/widget/config`, `/api/widget/chat`, `/api/widget/rate`, `/api/widget/ticket`, `/api/widget/follow-up`
 **Widget admin**: `/api/widget-installations`, `/api/widget-installations/[id]`, `/api/widget-reports/preview`, `/api/widget-reports/send` (master), `/api/widget-gaps`
 **MCP (public, token auth)**: `/api/mcp`

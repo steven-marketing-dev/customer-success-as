@@ -9,6 +9,12 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+# One build at a time: two pushes in a row used to race for the :latest tag and the older
+# commit could win (DIS-230). Runs queue instead of cancelling each other.
+concurrency:
+  group: build-and-deploy
+  cancel-in-progress: false
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -34,6 +40,7 @@ jobs:
             ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           build-args: |
             NEXT_PUBLIC_HUBSPOT_HUB_ID=${{ secrets.NEXT_PUBLIC_HUBSPOT_HUB_ID }}
+            GIT_SHA=${{ github.sha }}
 
   deploy:
     needs: build-and-push
