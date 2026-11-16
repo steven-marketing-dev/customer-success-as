@@ -853,13 +853,16 @@ function initDb(db: Database.Database) {
   // look like a new period (DIS-412). Rows from before the column get the date their period_end
   // falls on in the recipient's current timezone; the old UNIQUE(user, days, period_end) stays.
   try {
+    // The index goes first, so the backfill below cannot create two rows with the same key
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_widget_report_sends_date ON widget_report_sends(user_id, period_days, period_end_date) WHERE period_end_date IS NOT NULL");
     const rows = db.prepare(`
       SELECT s.id, s.period_end, u.timezone FROM widget_report_sends s JOIN users u ON u.id = s.user_id
-      WHERE s.period_end_date IS NULL
+      WHERE s.period_end_date IS NULL ORDER BY s.id
     `).all() as Array<{ id: number; period_end: number; timezone: string | null }>;
+    // Two old rows can fall on the same local date (the same period sent twice after a timezone
+    // change): the first keeps the date, the other stays without one and is simply never matched
     const set = db.prepare("UPDATE OR IGNORE widget_report_sends SET period_end_date = ? WHERE id = ?");
     for (const r of rows) set.run(localDateString(r.period_end, r.timezone), r.id);
-    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_widget_report_sends_date ON widget_report_sends(user_id, period_days, period_end_date) WHERE period_end_date IS NOT NULL");
   } catch { /* table may not exist yet */ }
 
   // Visitor emails read from HubSpot before the parser dropped mail clients' "<mailto:...>" suffix

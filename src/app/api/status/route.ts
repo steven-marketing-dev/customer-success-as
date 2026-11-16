@@ -30,8 +30,13 @@ export async function GET(req: NextRequest) {
   // Opening the DB applies the schema, so reaching this point means it is in place
   const repo = new Repository(getDb());
   const now = Math.floor(Date.now() / 1000);
+  // Stored error messages can quote an external API's response, so only say that it failed
   const parse = (key: string): Record<string, unknown> | null => {
-    try { return JSON.parse(repo.getAppMeta(key) ?? "null"); } catch { return null; }
+    try {
+      const value = JSON.parse(repo.getAppMeta(key) ?? "null") as Record<string, unknown> | null;
+      if (value && "error" in value) value.error = true;
+      return value;
+    } catch { return null; }
   };
   const job = getJobState();
   const sync = repo.getSyncState();

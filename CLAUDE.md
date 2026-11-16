@@ -72,12 +72,13 @@ AI_PROVIDER (claude|gemini), ANTHROPIC_API_KEY, GOOGLE_API_KEY, HUBSPOT_ACCESS_T
 
 - **One registry for "is a job running?"**: `src/lib/locks.ts`, kept on `global` like the DB handle. A module-level variable is NOT shared between `instrumentation` (scheduled jobs) and the API routes, so never guard a job with a module `let`. Names: `pipeline`, `kb-sync`, `widget-reports`, `db-clear`.
 - **KB sync**: one run at a time for cron, `/api/kb/sync` and the Pipeline button. A caller that finds a run in progress shares it, except a real sync that finds a dry run: it waits and then runs. The last real run is in `app_meta.kb_sync_last`.
-- **Re-cluster**: the new taxonomy is computed first and applied in one transaction (`Repository.applyTaxonomy`); a failure changes nothing. Categories are matched by name and a category is never deleted while a Q&A or a behavioral rule uses it, so category-scoped rules keep their category. A rule with `scope = 'category'` and no category shows "needs a category" in Rules and is not applied.
+- **Re-cluster**: the new taxonomy is computed first and applied in one transaction (`Repository.applyTaxonomy`); a failure changes nothing. Categories are matched by name and a category is never deleted while a Q&A or a behavioral rule uses it, so category-scoped rules keep their category. A rule with `scope = 'category'` and no category shows "needs a category" in Rules, and one whose category has no Q&A left (renamed or dropped by a re-cluster) shows "category has no Q&A"; neither is applied until someone picks a category.
 - **Widget report sends**: identified by (user, length, local end date `period_end_date`), not by the instant. A row in `sending` for more than 15 minutes (process restarted mid-send) is retried like a failure, so after a restart a report can arrive twice; it is never lost silently. Three failed attempts, an interrupted send with no attempts left, and missing SendGrid config are logged as `ERROR` and show in `/api/status`.
 - **Sessions**: `requireAuth` checks that the user still exists and takes the role from `users`; the cookie alone (7-day JWT) is not enough. Every route that changes data calls `requireAuth` or `requireUser`.
 - **Clear DB**: master only, refused while a job runs. Deletes tickets, Q&A and categories; keeps categories a rule points to, reopens widget gaps whose answer was deleted, rebuilds FTS.
 - **Widget follow-up / email form**: one send per (exchange, reason) for follow-ups (checked against `widget_events`), and identical email-form submissions within 30 s are sent once (`src/lib/dedupe.ts`).
-- **Pipeline cursor**: `sync_state.last_sync_at` is the time the tickets were fetched, not the end of the run.
+- **Pipeline cursor**: `sync_state.last_sync_at` is the time the tickets were fetched minus 5 minutes of overlap, not the end of the run.
+- **Tour**: `background-jobs-v1` (admins, after the gap queue tour) shows the status box on the Pipeline tab.
 
 ## Database tables
 

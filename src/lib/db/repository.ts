@@ -421,6 +421,7 @@ export class Repository {
     const describe = this.db.prepare("UPDATE categories SET description = ?, updated_at = unixepoch() WHERE id = ? AND ? IS NOT NULL");
     this.db.transaction(() => {
       const ids = new Map<string, number>();
+      const cleared = new Set<number>();
       for (const a of assignments) {
         let id = ids.get(a.name);
         if (id == null) {
@@ -428,7 +429,8 @@ export class Repository {
           describe.run(a.description ?? null, id, a.description ?? null);
           ids.set(a.name, id);
         }
-        clear.run(a.qaId);
+        // A Q&A may be given more than one category; drop its old ones once
+        if (!cleared.has(a.qaId)) { clear.run(a.qaId); cleared.add(a.qaId); }
         this.assignCategory(a.qaId, id, a.confidence);
       }
       this.deleteUnusedCategories();

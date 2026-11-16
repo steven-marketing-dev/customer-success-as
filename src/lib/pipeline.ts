@@ -440,7 +440,8 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
   // The next incremental sync starts from when this fetch was made, not from when the run
   // ends: a ticket that changes in HubSpot while the run is processing must be picked up next
   // time (DIS-412). Re-fetching a ticket is harmless, the upsert is keyed by hubspot_id.
-  const fetchStartedAt = Math.floor(Date.now() / 1000);
+  // Five minutes of overlap cover HubSpot's search index lagging behind a change.
+  const fetchStartedAt = Math.floor(Date.now() / 1000) - 5 * 60;
 
   let rawTickets: Awaited<ReturnType<HubSpotClient["getTickets"]>>;
   try {

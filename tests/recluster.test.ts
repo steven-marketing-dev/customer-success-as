@@ -60,6 +60,22 @@ test("a category the new taxonomy drops stays while a rule points to it; unused 
   assert.equal(repo.getCategoryByName("Old unused"), undefined);
   assert.equal(other.id > 0, true);
   assert.equal(mapped(), 3);
+  // The kept category has no Q&A left, so the rule no longer matches any question: that is
+  // what the Rules tab flags as "category has no Q&A" (it reads `count` from /api/kb)
+  assert.equal(repo.getCategorySummary().find((c) => c.id === billing.id)!.count, 0);
+});
+
+test("a Q&A the taxonomy puts in two categories keeps both", async () => {
+  const { qa } = seed();
+  const c: ReclusterCategorizer = {
+    reclusterAll: async () => ({ categories: [
+      { name: "Payments", description: "p", qa_ids: qa.map((q) => q.id) },
+      { name: "Refunds", description: "r", qa_ids: [qa[0].id] },
+    ], unassignedIds: [] }),
+    categorizeSingle: async () => { throw new Error("not used"); },
+  };
+  await executeRecluster(repo, c, repo.getAllQAWithCategories(), quiet);
+  assert.equal(mapped(), 4);
 });
 
 test("a Q&A created while the AI was thinking keeps its category", async () => {

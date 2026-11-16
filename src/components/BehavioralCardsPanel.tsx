@@ -9,7 +9,7 @@ type TypeFilter = "all" | "knowledge" | "solution" | "general";
 
 export function BehavioralCardsPanel() {
   const [cards, setCards] = useState<BehavioralCardData[]>([]);
-  const [categories, setCategories] = useState<Array<{ id: number; name: string }>>([]);
+  const [categories, setCategories] = useState<Array<{ id: number; name: string; qa_count?: number }>>([]);
   const [query, setQuery] = useState("");
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>("all");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
@@ -70,7 +70,7 @@ export function BehavioralCardsPanel() {
       const res = await fetch("/api/kb");
       const data = await res.json();
       if (Array.isArray(data.categories)) {
-        setCategories(data.categories.map((c: { id: number; name: string }) => ({ id: c.id, name: c.name })));
+        setCategories(data.categories.map((c: { id: number; name: string; count?: number }) => ({ id: c.id, name: c.name, qa_count: c.count })));
       }
     } catch { /* ignore */ }
   }, []);

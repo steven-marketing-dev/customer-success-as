@@ -15,7 +15,7 @@ import VideoGuidesPanel from "@/components/VideoGuidesPanel";
 import { type QAItem } from "@/components/QACard";
 import { WidgetInstallationsPanel } from "@/components/WidgetInstallationsPanel";
 import TourEngine, { type TourDefinition } from "@/components/TourEngine";
-import { createEmailReportsTour, createWidgetGapsTour } from "@/lib/tours";
+import { createEmailReportsTour, createWidgetGapsTour, createBackgroundJobsTour } from "@/lib/tours";
 
 const REPORT_TIMEZONES = [
   "America/Los_Angeles", "America/Denver", "America/Phoenix", "America/Chicago",
@@ -145,6 +145,14 @@ export default function Home() {
     if (!user || !toursLoaded || activeTour || showWhatsNew) return;
     if (!completedTours.includes("email-reports-v1") || completedTours.includes("widget-gaps-v2")) return;
     const t = setTimeout(() => setActiveTour(createWidgetGapsTour({ openDashboard: () => setTab("dashboard") })), 1500);
+    return () => clearTimeout(t);
+  }, [user, toursLoaded, completedTours, activeTour, showWhatsNew]);
+
+  // Background jobs tour (DIS-412): once per admin (only they see the Pipeline tab), after the gap queue tour
+  useEffect(() => {
+    if (!user || user.role !== "master" || !toursLoaded || activeTour || showWhatsNew) return;
+    if (!completedTours.includes("widget-gaps-v2") || completedTours.includes("background-jobs-v1")) return;
+    const t = setTimeout(() => setActiveTour(createBackgroundJobsTour({ openPipeline: () => setTab("pipeline") })), 1500);
     return () => clearTimeout(t);
   }, [user, toursLoaded, completedTours, activeTour, showWhatsNew]);
 
